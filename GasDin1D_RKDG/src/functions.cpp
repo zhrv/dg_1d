@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <cmath>
 
 
@@ -211,3 +212,31 @@ lbl157:
 	PI = AGAM*EI*RI;
 
 }
+
+void addMatr3ToMatr9(double **m9, double **m3, int i, int j) {
+
+	int ii = i * 3;
+	int jj = j * 3;
+	for (int i1 = 0; i1 < 3; i1++) {
+		for (int j1 = 0; j1 < 3; j1++) {
+			m9[ii + i1][jj + j1] = m9[ii + i1][jj + j1] + m3[i1][j1];
+		}
+	}
+}
+
+void URS(int iCase, double& r, double& p, double& e, double gam) {
+	switch (iCase) {
+	case 1:
+		p = r*e*(gam - 1);
+		break;
+	case 2:
+		r = p / (e*(gam - 1));
+		break;
+	case 3:
+		e = p / (r*(gam - 1));
+		break;
+	default:
+		printf("ERROR: bad URS() parameter\n");
+		break;
+	}
+}// URS

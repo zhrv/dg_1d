@@ -4,18 +4,20 @@
 #include "Solver.h"
 #include "functions.h"
 
-const double	CFL		= 1000.0;
+const double	CFL		= 1.0;
 
-const int		N		= 500;
+const double	LIM_ALPHA = 1.5;
+
+const int		N		= 200;
 const double	XMIN	= -1.0; 
 const double	XMAX	=  1.0;
-const double	EPS		= 1.0e-5;
+const double	EPS		= 1.0e-2;
 const double	GAM		= 1.4;
 const double	AGAM	= GAM-1.0;
 const double	TMAX	= 0.2;
 
-const int		MAX_ITER	= 1000;
-const int		SAVE_STEP	= 1;
+const int		MAX_ITER	= 5000;
+const int		SAVE_STEP	= 100;
 
 double **ro, **ru, **re;
 double *r, *u, *e, *p; 
@@ -28,6 +30,9 @@ double **cellGP, **cellGW, *cellC;
 
 double h	=	(XMAX-XMIN)/N;
 double tau	=	1.0e-4;
+
+#define FLUX     rim_orig
+#define FLUX_RHS rim_orig
 
 Solver *S;
 
@@ -48,6 +53,7 @@ void calcIntegral();
 void calcMatrWithTau();
 void calcMatrFlux();
 void calcRHS();
+void calcLimiter();
 
 
 int main(int argc, char** argv) 
@@ -60,14 +66,13 @@ int main(int argc, char** argv)
 		step++;
 		S->zero();
 		
-		
 		calcIntegral();			// вычисл€ем интеграл от(dF / dU)*deltaU*dFi / dx
 		calcMatrWithTau();		// вычисл€ем матрицы перед производной по времени
 		calcMatrFlux();			// ¬ычисл€ем потоковые величины 
 		calcRHS();				// ¬ычисл€ем столбец правых членов
 
 		int maxIter = MAX_ITER;
-		//S->printMatr();
+		
 		S->solve(EPS, maxIter);
 		
 		for (int iCell = 0, ind = 0; iCell < N; iCell++, ind += 9) {
@@ -80,18 +85,26 @@ int main(int argc, char** argv)
 			re[iCell][0] += S->x[ind + 6];
 			re[iCell][1] += S->x[ind + 7];
 			re[iCell][2] += S->x[ind + 8];
-			consToPrim(r[iCell], p[iCell], u[iCell], getField(0, iCell, cellC[iCell]), getField(1, iCell, cellC[iCell]), getField(2, iCell, cellC[iCell]));
 		}
-		
+
+		calcLimiter();
+
+		for (int iCell = 0, ind = 0; iCell < N; iCell++, ind += 9) {
+			consToPrim(r[iCell], p[iCell], u[iCell], ro[iCell][0], ru[iCell][0], re[iCell][0]);
+		}
+
+
 		printf("%10d | ITER: %4d | RO: ... | RU: ... | RE ... \n", step, maxIter);
 		if (step % SAVE_STEP == 0) {
 			char str[50];
 			sprintf(str, "res_%010d.csv", step);
 			FILE * fp = fopen(str, "w");
+			fprintf(fp, "x,r,p,u\n");
 			for (int i = 0; i < N; i++) {
 				fprintf(fp, "%25.15e, %25.15e, %25.15e, %25.15e\n", XMIN+h*i, r[i], p[i], u[i]);
 			}
 			fclose(fp);
+			printf("           | File '%s' is written...\n", str);
 		}
 	}
 
@@ -225,41 +238,7 @@ void calcMassMatr() {
 
 void init() {
 	memAlloc();
-	S = SolverFactory::create(SOLVER_TYPE_ZEIDEL);
-	S->init(N);
-	for (int i = 0; i < N; i++) {
-		double x = XMIN + i*h;
-		//// Sod
-		//if (x < 0.0) {
-		//	r[i] = 1.0;
-		//	p[i] = 1.0;
-		//	u[i] = 0.0;
-		//} else {
-		//	r[i] = 0.125;
-		//	p[i] = 0.1;
-		//	u[i] = 0.0;
-		//}
-		// Lax
-		if (x < 0.0) {
-			r[i] = 0.445;
-			p[i] = 3.528;
-			u[i] = 0.698;
-		}
-		else {
-			r[i] = 0.5;
-			p[i] = 0.571;
-			u[i] = 0.0;
-		}
-		primToCons(r[i], p[i], u[i], ro[i][0], ru[i][0], re[i][0]);
-		ro[i][1] = ro[i][2] = 0.0;
-		ru[i][1] = ru[i][2] = 0.0;
-		re[i][1] = re[i][2] = 0.0;
-		double dt = CFL*h / (fabs(u[i]) + sqrt(GAM*p[i] / r[i]));
-		if (dt < tau) tau = dt;
-	}
-	printf("TAU = %25.16e\n\n", tau);
-
-
+	
 	// узлы квадратур √аусса и центры €чеек
 	for (int i = 0; i < N; i++){
 		double x1 = XMIN + i*h;
@@ -272,6 +251,46 @@ void init() {
 		cellGP[i][1] = 0.5*((x1 + x2) + tmp);
 		cellC[i] = 0.50*(x1 + x2);
 	}
+
+	S = SolverFactory::create(SOLVER_TYPE_ZEIDEL);
+	S->init(N);
+	for (int i = 0; i < N; i++) {
+		double x = cellC[i];
+		// Sod
+		if (x < 0.0) {
+			r[i] = 1.0;
+			p[i] = 1.0;
+			u[i] = 0.0;
+		} else {
+			r[i] = 0.125;
+			p[i] = 0.1;
+			u[i] = 0.0;
+		}
+		// Lax
+		//if (x < 0.0) {
+		//	r[i] = 0.445;
+		//	p[i] = 3.528;
+		//	u[i] = 0.698;
+		//}
+		//else {
+		//	r[i] = 0.5;
+		//	p[i] = 0.571;
+		//	u[i] = 0.0;
+		//}
+
+		//r[i] = 0.125;
+		//p[i] = 0.1;
+		//u[i] = 1.0;
+
+		primToCons(r[i], p[i], u[i], ro[i][0], ru[i][0], re[i][0]);
+		ro[i][1] = ro[i][2] = 0.0;
+		ru[i][1] = ru[i][2] = 0.0;
+		re[i][1] = re[i][2] = 0.0;
+		double dt = CFL*h / (fabs(u[i]) + sqrt(GAM*p[i] / r[i]));
+		if (dt < tau) tau = dt;
+	}
+	printf("TAU = %25.16e\n\n", tau);
+
 
 	calcMassMatr();
 
@@ -445,12 +464,12 @@ void calcIntegral() {
 						matr[i][j] = 0.0;
 						for (int k = 0; k < 2; k++) {
 							double x = cellGP[iCell][k];
-							matr[i][j] = matr[i][j] - cellGW[i][k]*mA[k][ii][jj]*getDF(i, iCell, x)*getF(j, iCell, x);
+							matr[i][j] = matr[i][j] - cellGW[iCell][k]*mA[k][ii][jj]*getDF(i, iCell, x)*getF(j, iCell, x);
 						}
 					}
 				}
 				//call Solver_AddMatr3(m9, m3, ii, jj)
-				addMatr3ToMatr9(matr9, matr, ii, ii);
+				addMatr3ToMatr9(matr9, matr, ii, jj);
 			}
 		}
 
@@ -482,7 +501,6 @@ void calcMatrWithTau() {
 			addMatr3ToMatr9(matr9, matr, ii, ii);
 		}
 
-		//call Solver_AddMatr9(matr, m9, iCell, iCell)
 		S->addMatrElement(iCell, iCell, matr9);
 
 	}
@@ -504,7 +522,6 @@ void calcMatrFlux() {
 				}
 			}
 
-			//осреднение по –оу
 			double x1 = cellC[iCell] + 0.50*h;
 
 			double ROl = getField(0, iCell, x1);
@@ -515,7 +532,7 @@ void calcMatrFlux() {
 			double REr = getField(2, iCell + 1, x1);
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
-			roe_orig(ri, ei, pi, ui, vi, wi,
+			FLUX(ri, ei, pi, ui, vi, wi,
 				rb, pb, ub, vb, wb,
 				re, pe, ue, ve, we, GAM);
 
@@ -534,7 +551,7 @@ void calcMatrFlux() {
 				for (int jj = 1; jj < 3; jj++){
 					for (int i = 0; i < 3; i++){
 						for (int j = 0; j < 3; j++){
-							matr[i][j] = Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell+1, x1);
+							matr[i][j] = Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell + 1, x1);
 						}
 					}
 					addMatr3ToMatr9(matr9, matr, ii, jj);
@@ -586,7 +603,7 @@ void calcMatrFlux() {
 			double REr = getField(2, iCell, x1);
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
-			roe_orig(ri, ei, pi, ui, vi, wi,
+			FLUX(ri, ei, pi, ui, vi, wi,
 				rb, pb, ub, vb, wb,
 				re, pe, ue, ve, we, GAM);
 
@@ -625,7 +642,7 @@ void calcMatrFlux() {
 				for (int jj = 0; jj < 3; jj++){
 					for (int i = 0; i < 3; i++){
 						for (int j = 0; j < 3; j++){
-							matr[i][j] = -Ap[ii][jj] * getF(i, iCell, x1)*getF(j, iCell-1, x1);
+							matr[i][j] = -Ap[ii][jj] * getF(i, iCell, x1)*getF(j, iCell - 1, x1);
 						}
 					}
 					addMatr3ToMatr9(matr9, matr, ii, jj);
@@ -664,7 +681,7 @@ void calcMatrFlux() {
 			double REr = getField(2, iCell + 1, x1);
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
-			roe_orig(ri, ei, pi, ui, vi, wi,
+			FLUX(ri, ei, pi, ui, vi, wi,
 				rb, pb, ub, vb, wb,
 				re, pe, ue, ve, we, GAM);
 
@@ -733,7 +750,7 @@ void calcMatrFlux() {
 			//consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
 			rb = re; pb = pe; ub = ue;
-			roe_orig(ri, ei, pi, ui, vi, wi,
+			FLUX(ri, ei, pi, ui, vi, wi,
 				rb, pb, ub, vb, wb,
 				re, pe, ue, ve, we, GAM);
 
@@ -811,7 +828,7 @@ void calcMatrFlux() {
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			//consToPrim(re, pe, ue, ROr, RUr, REr);
 			re = rb; pe = pb; ue = ub;
-			roe_orig(ri, ei, pi, ui, vi, wi,
+			FLUX(ri, ei, pi, ui, vi, wi,
 				rb, pb, ub, vb, wb,
 				re, pe, ue, ve, we, GAM);
 
@@ -882,7 +899,7 @@ void calcMatrFlux() {
 			double REr = getField(2, iCell, x1);
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
-			roe_orig(ri, ei, pi, ui, vi, wi,
+			FLUX(ri, ei, pi, ui, vi, wi,
 				rb, pb, ub, vb, wb,
 				re, pe, ue, ve, we, GAM);
 
@@ -917,6 +934,7 @@ void calcMatrFlux() {
 					matr9[i][j] = 0.0;
 				}
 			}
+
 			for (int ii = 0; ii < 3; ii++){
 				for (int jj = 0; jj < 3; jj++){
 					for (int i = 0; i < 3; i++){
@@ -943,12 +961,383 @@ void calcMatrFlux() {
 
 }
 
-
-void calcRHS() {
+double _max_(double a, double b) {
+	if (a > b) return a;
+	return b;
 }
 
+void calcRHS() {
+	double  ri, ei, pi, ui, vi, wi,
+			rb, pb, ub, vb=0.0, wb=0.0,
+			re, pe, ue, ve=0.0, we=0.0,
+			alpha;
+	double *vect = new double[9];
+	for (int iCell = 0; iCell < N; iCell++) {
+		memset(vect, 0, 9*sizeof(double));
+		for (int k = 0; k < 2; k++) {
+			double x = cellGP[iCell][k];
+			double w = cellGW[iCell][k];
+			double fRO = getField(0, iCell, x);
+			double fRU = getField(1, iCell, x);
+			double fRE = getField(2, iCell, x);
+			consToPrim(ri, pi, ui, fRO, fRU, fRO);
+			fRO = ri*ui;
+			fRU = ri*ui*ui + pi;
+			fRE = (pi/AGAM+ri*ui*ui*0.5 +pi)*ui;
+			vect[0] += w*fRO*getDF(0, iCell, x); 
+			vect[1] += w*fRO*getDF(1, iCell, x); 
+			vect[2] += w*fRO*getDF(2, iCell, x); 
+			vect[3] += w*fRU*getDF(0, iCell, x); 
+			vect[4] += w*fRU*getDF(1, iCell, x); 
+			vect[5] += w*fRU*getDF(2, iCell, x); 
+			vect[6] += w*fRE*getDF(0, iCell, x); 
+			vect[7] += w*fRE*getDF(1, iCell, x); 
+			vect[8] += w*fRE*getDF(2, iCell, x); 
+		}
+		S->addRightElement(iCell, vect);
+	}
 
+	for (int iCell = 1; iCell < N-1; iCell++) {
+		{ // iCell+1/2
+			double x = cellC[iCell]+0.5*h;
+			double ROl = getField(0, iCell, x);
+			double RUl = getField(1, iCell, x);
+			double REl = getField(2, iCell, x);
+			double ROr = getField(0, iCell+1, x);
+			double RUr = getField(1, iCell+1, x);
+			double REr = getField(2, iCell+1, x);
+			consToPrim(rb, pb, ub, ROl, RUl, REl);
+			consToPrim(re, pe, ue, ROr, RUr, REr);
+			//FLUX_RHS(ri, ei, pi, ui, vi, wi,
+			//	rb, pb, ub, vb, wb,
+			//	re, pe, ue, ve, we, GAM);
+			//double fRO = ri*ui;
+			//double fRU = ri*ui*ui + pi;
+			//double fRE = (pi / AGAM + ri*ui*ui*0.5 + pi)*ui;
+			alpha = _max_(fabs(ub) + sqrt(GAM*pb / rb), fabs(ue) + sqrt(GAM*pe / re));
+			double fRO = 0.5*(rb*ub+re*ue-alpha*(re-rb));
+			double fRU = 0.5*(rb*ub*ub + pb + re*ue*ue + pe-alpha*(re*ue-rb*ub));
+			double fRE = 0.5*((pb / AGAM + rb*ub*ub*0.5 + pb)*ub + (pe / AGAM + re*ue*ue*0.5 + pe)*ue - alpha*((pe / AGAM + re*ue*ue*0.5) - (pb / AGAM + rb*ub*ub*0.5)));
+			vect[0] = -fRO*getF(0, iCell, x);
+			vect[1] = -fRO*getF(1, iCell, x);
+			vect[2] = -fRO*getF(2, iCell, x);
+			vect[3] = -fRU*getF(0, iCell, x);
+			vect[4] = -fRU*getF(1, iCell, x);
+			vect[5] = -fRU*getF(2, iCell, x);
+			vect[6] = -fRE*getF(0, iCell, x);
+			vect[7] = -fRE*getF(1, iCell, x);
+			vect[8] = -fRE*getF(2, iCell, x);
+			S->addRightElement(iCell, vect);
+		}
+		{ // iCell-1/2
+			double x = cellC[iCell]-0.5*h;
+			double ROl = getField(0, iCell-1, x);
+			double RUl = getField(1, iCell-1, x);
+			double REl = getField(2, iCell-1, x);
+			double ROr = getField(0, iCell, x);
+			double RUr = getField(1, iCell, x);
+			double REr = getField(2, iCell, x);
+			consToPrim(rb, pb, ub, ROl, RUl, REl);
+			consToPrim(re, pe, ue, ROr, RUr, REr);
+			//FLUX_RHS(ri, ei, pi, ui, vi, wi,
+			//	rb, pb, ub, vb, wb,
+			//	re, pe, ue, ve, we, GAM);
+			//double fRO = ri*ui;
+			//double fRU = ri*ui*ui + pi;
+			//double fRE = (pi / AGAM + ri*ui*ui*0.5 + pi)*ui;
+			alpha = _max_(fabs(ub) + sqrt(GAM*pb / rb), fabs(ue) + sqrt(GAM*pe / re));
+			double fRO = 0.5*(rb*ub + re*ue - alpha*(re - rb));
+			double fRU = 0.5*(rb*ub*ub + pb + re*ue*ue + pe - alpha*(re*ue - rb*ub));
+			double fRE = 0.5*((pb / AGAM + rb*ub*ub*0.5 + pb)*ub + (pe / AGAM + re*ue*ue*0.5 + pe)*ue - alpha*((pe / AGAM + re*ue*ue*0.5) - (pb / AGAM + rb*ub*ub*0.5)));
+			vect[0] = fRO*getF(0, iCell, x);
+			vect[1] = fRO*getF(1, iCell, x);
+			vect[2] = fRO*getF(2, iCell, x);
+			vect[3] = fRU*getF(0, iCell, x);
+			vect[4] = fRU*getF(1, iCell, x);
+			vect[5] = fRU*getF(2, iCell, x);
+			vect[6] = fRE*getF(0, iCell, x);
+			vect[7] = fRE*getF(1, iCell, x);
+			vect[8] = fRE*getF(2, iCell, x);
+			S->addRightElement(iCell, vect);
+		}
+	}
+	
+	{ 
+		int iCell = 0;
+		{ // iCell+1/2
+			double x = cellC[iCell]+0.5*h;
+			double ROl = getField(0, iCell, x);
+			double RUl = getField(1, iCell, x);
+			double REl = getField(2, iCell, x);
+			double ROr = getField(0, iCell+1, x);
+			double RUr = getField(1, iCell+1, x);
+			double REr = getField(2, iCell+1, x);
+			consToPrim(rb, pb, ub, ROl, RUl, REl);
+			consToPrim(re, pe, ue, ROr, RUr, REr);
+			//FLUX_RHS(ri, ei, pi, ui, vi, wi,
+			//	rb, pb, ub, vb, wb,
+			//	re, pe, ue, ve, we, GAM);
+			//double fRO = ri*ui;
+			//double fRU = ri*ui*ui + pi;
+			//double fRE = (pi / AGAM + ri*ui*ui*0.5 + pi)*ui;
+			alpha = _max_(fabs(ub) + sqrt(GAM*pb / rb), fabs(ue) + sqrt(GAM*pe / re));
+			double fRO = 0.5*(rb*ub + re*ue - alpha*(re - rb));
+			double fRU = 0.5*(rb*ub*ub + pb + re*ue*ue + pe - alpha*(re*ue - rb*ub));
+			double fRE = 0.5*((pb / AGAM + rb*ub*ub*0.5 + pb)*ub + (pe / AGAM + re*ue*ue*0.5 + pe)*ue - alpha*((pe / AGAM + re*ue*ue*0.5) - (pb / AGAM + rb*ub*ub*0.5)));
+			vect[0] = -fRO*getF(0, iCell, x);
+			vect[1] = -fRO*getF(1, iCell, x);
+			vect[2] = -fRO*getF(2, iCell, x);
+			vect[3] = -fRU*getF(0, iCell, x);
+			vect[4] = -fRU*getF(1, iCell, x);
+			vect[5] = -fRU*getF(2, iCell, x);
+			vect[6] = -fRE*getF(0, iCell, x);
+			vect[7] = -fRE*getF(1, iCell, x);
+			vect[8] = -fRE*getF(2, iCell, x);
+			S->addRightElement(iCell, vect);
+		}
+		{ // iCell-1/2
+			double x = cellC[iCell]-0.5*h;
+			//double ROl = getField(0, iCell-1, x);
+			//double RUl = getField(1, iCell-1, x);
+			//double REl = getField(2, iCell-1, x);
+			double ROr = getField(0, iCell, x);
+			double RUr = getField(1, iCell, x);
+			double REr = getField(2, iCell, x);
+			//consToPrim(rb, pb, ub, ROl, RUl, REl);
+			consToPrim(re, pe, ue, ROr, RUr, REr);
+			rb = re; pb = pe; ub = ue;
+			//FLUX_RHS(ri, ei, pi, ui, vi, wi,
+			//	rb, pb, ub, vb, wb,
+			//	re, pe, ue, ve, we, GAM);
+			//double fRO = ri*ui;
+			//double fRU = ri*ui*ui + pi;
+			//double fRE = (pi / AGAM + ri*ui*ui*0.5 + pi)*ui;
+			alpha = _max_(fabs(ub) + sqrt(GAM*pb / rb), fabs(ue) + sqrt(GAM*pe / re));
+			double fRO = 0.5*(rb*ub + re*ue - alpha*(re - rb));
+			double fRU = 0.5*(rb*ub*ub + pb + re*ue*ue + pe - alpha*(re*ue - rb*ub));
+			double fRE = 0.5*((pb / AGAM + rb*ub*ub*0.5 + pb)*ub + (pe / AGAM + re*ue*ue*0.5 + pe)*ue - alpha*((pe / AGAM + re*ue*ue*0.5) - (pb / AGAM + rb*ub*ub*0.5)));
+			vect[0] = fRO*getF(0, iCell, x);
+			vect[1] = fRO*getF(1, iCell, x);
+			vect[2] = fRO*getF(2, iCell, x);
+			vect[3] = fRU*getF(0, iCell, x);
+			vect[4] = fRU*getF(1, iCell, x);
+			vect[5] = fRU*getF(2, iCell, x);
+			vect[6] = fRE*getF(0, iCell, x);
+			vect[7] = fRE*getF(1, iCell, x);
+			vect[8] = fRE*getF(2, iCell, x);
+			S->addRightElement(iCell, vect);
+		}
+	}
 
+	{ 
+		int iCell = N-1;
+		{ // iCell+1/2
+			double x = cellC[iCell]+0.5*h;
+			double ROl = getField(0, iCell, x);
+			double RUl = getField(1, iCell, x);
+			double REl = getField(2, iCell, x);
+			//double ROr = getField(0, iCell+1, x);
+			//double RUr = getField(1, iCell+1, x);
+			//double REr = getField(2, iCell+1, x);
+			consToPrim(rb, pb, ub, ROl, RUl, REl);
+			//consToPrim(re, pe, ue, ROr, RUr, REr);
+			re = rb; pe = pb; ue = ub;
+			//FLUX_RHS(ri, ei, pi, ui, vi, wi,
+			//	rb, pb, ub, vb, wb,
+			//	re, pe, ue, ve, we, GAM);
+			//double fRO = ri*ui;
+			//double fRU = ri*ui*ui + pi;
+			//double fRE = (pi / AGAM + ri*ui*ui*0.5 + pi)*ui;
+			alpha = _max_(fabs(ub) + sqrt(GAM*pb / rb), fabs(ue) + sqrt(GAM*pe / re));
+			double fRO = 0.5*(rb*ub + re*ue - alpha*(re - rb));
+			double fRU = 0.5*(rb*ub*ub + pb + re*ue*ue + pe - alpha*(re*ue - rb*ub));
+			double fRE = 0.5*((pb / AGAM + rb*ub*ub*0.5 + pb)*ub + (pe / AGAM + re*ue*ue*0.5 + pe)*ue - alpha*((pe / AGAM + re*ue*ue*0.5) - (pb / AGAM + rb*ub*ub*0.5)));
+			vect[0] = -fRO*getF(0, iCell, x);
+			vect[1] = -fRO*getF(1, iCell, x);
+			vect[2] = -fRO*getF(2, iCell, x);
+			vect[3] = -fRU*getF(0, iCell, x);
+			vect[4] = -fRU*getF(1, iCell, x);
+			vect[5] = -fRU*getF(2, iCell, x);
+			vect[6] = -fRE*getF(0, iCell, x);
+			vect[7] = -fRE*getF(1, iCell, x);
+			vect[8] = -fRE*getF(2, iCell, x);
+			S->addRightElement(iCell, vect);
+		}
+		{ // iCell-1/2
+			double x = cellC[iCell]-0.5*h;
+			double ROl = getField(0, iCell-1, x);
+			double RUl = getField(1, iCell-1, x);
+			double REl = getField(2, iCell-1, x);
+			double ROr = getField(0, iCell, x);
+			double RUr = getField(1, iCell, x);
+			double REr = getField(2, iCell, x);
+			consToPrim(rb, pb, ub, ROl, RUl, REl);
+			consToPrim(re, pe, ue, ROr, RUr, REr);
+			//FLUX_RHS(ri, ei, pi, ui, vi, wi,
+			//	rb, pb, ub, vb, wb,
+			//	re, pe, ue, ve, we, GAM);
+			//double fRO = ri*ui;
+			//double fRU = ri*ui*ui + pi;
+			//double fRE = (pi / AGAM + ri*ui*ui*0.5 + pi)*ui;
+			alpha = _max_(fabs(ub) + sqrt(GAM*pb / rb), fabs(ue) + sqrt(GAM*pe / re));
+			double fRO = 0.5*(rb*ub + re*ue - alpha*(re - rb));
+			double fRU = 0.5*(rb*ub*ub + pb + re*ue*ue + pe - alpha*(re*ue - rb*ub));
+			double fRE = 0.5*((pb / AGAM + rb*ub*ub*0.5 + pb)*ub + (pe / AGAM + re*ue*ue*0.5 + pe)*ue - alpha*((pe / AGAM + re*ue*ue*0.5) - (pb / AGAM + rb*ub*ub*0.5)));
+			vect[0] = fRO*getF(0, iCell, x);
+			vect[1] = fRO*getF(1, iCell, x);
+			vect[2] = fRO*getF(2, iCell, x);
+			vect[3] = fRU*getF(0, iCell, x);
+			vect[4] = fRU*getF(1, iCell, x);
+			vect[5] = fRU*getF(2, iCell, x);
+			vect[6] = fRE*getF(0, iCell, x);
+			vect[7] = fRE*getF(1, iCell, x);
+			vect[8] = fRE*getF(2, iCell, x);
+			S->addRightElement(iCell, vect);
+		}
+	}
+	delete[] vect;
+}
+
+inline double _sign_(double a) {
+	if (a < 0.0) {
+		return -1.0;
+	}
+	else if (a > 0.0) {
+		return 1.0;
+	}
+	else {
+		return 0.0;
+	}
+}
+
+inline double _min_(double a, double b) {
+	if (a < b) return a;
+	return b;
+}
+
+double minmod(double a, double b, double c) {
+	
+	if ((_sign_(a) == _sign_(b)) && (_sign_(c) == _sign_(b))) {
+		return _sign_(a)*_min_(_min_(fabs(a), fabs(b)), fabs(c));
+	}
+	return 0.0;
+}
+
+void calcLimiter() {
+	{
+		int iCell = 0;
+		// проецируем на линейный базис
+		double u0, u1, u1l;
+		u0 = ro[iCell][0] + ro[iCell][2] / 12.0;
+		u1 = ro[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ro[iCell + 1][0] + ro[iCell + 1][2] / 12.0 - u0),
+			LIM_ALPHA*(u0 - ro[iCell][0] - ro[iCell][2] / 12.0));
+		if (u1l != u1) {
+			ro[iCell][0] = u0;
+			ro[iCell][1] = u1l;
+			ro[iCell][2] = 0.0;
+		}
+
+		u0 = ru[iCell][0] + ru[iCell][2] / 12.0;
+		u1 = ru[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ru[iCell + 1][0] + ru[iCell + 1][2] / 12.0 - u0),
+			LIM_ALPHA*(u0 - ru[iCell][0] - ru[iCell][2] / 12.0));
+		if (u1l != u1) {
+			ru[iCell][0] = u0;
+			ru[iCell][1] = u1l;
+			ru[iCell][2] = 0.0;
+		}
+
+		u0 = re[iCell][0] + re[iCell][2] / 12.0;
+		u1 = re[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(re[iCell + 1][0] + re[iCell + 1][2] / 12.0 - u0),
+			LIM_ALPHA*(u0 - re[iCell][0] - re[iCell][2] / 12.0));
+		if (u1l != u1) {
+			re[iCell][0] = u0;
+			re[iCell][1] = u1l;
+			re[iCell][2] = 0.0;
+		}
+
+	}
+	for (int iCell = 1; iCell < N - 1; iCell++) {
+		// проецируем на линейный базис
+		double u0, u1, u1l;
+		u0 = ro[iCell][0] + ro[iCell][2] / 12.0;
+		u1 = ro[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ro[iCell + 1][0] + ro[iCell + 1][2] / 12.0 - u0),
+			LIM_ALPHA*(u0 - ro[iCell - 1][0] - ro[iCell - 1][2] / 12.0));
+		if (u1l != u1) {
+			ro[iCell][0] = u0;
+			ro[iCell][1] = u1l;
+			ro[iCell][2] = 0.0;
+		}
+
+		u0 = ru[iCell][0] + ru[iCell][2] / 12.0;
+		u1 = ru[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ru[iCell + 1][0] + ru[iCell + 1][2] / 12.0 - u0),
+			LIM_ALPHA*(u0 - ru[iCell - 1][0] - ru[iCell - 1][2] / 12.0));
+		if (u1l != u1) {
+			ru[iCell][0] = u0;
+			ru[iCell][1] = u1l;
+			ru[iCell][2] = 0.0;
+		}
+
+		u0 = re[iCell][0] + re[iCell][2] / 12.0;
+		u1 = re[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(re[iCell + 1][0] + re[iCell + 1][2] / 12.0 - u0),
+			LIM_ALPHA*(u0 - re[iCell - 1][0] - re[iCell - 1][2] / 12.0));
+		if (u1l != u1) {
+			re[iCell][0] = u0;
+			re[iCell][1] = u1l;
+			re[iCell][2] = 0.0;
+		}
+
+	}
+	{
+		int iCell = N - 1;
+		// проецируем на линейный базис
+		double u0, u1, u1l;
+		u0 = ro[iCell][0] + ro[iCell][2] / 12.0;
+		u1 = ro[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ro[iCell][0] + ro[iCell][2] / 12.0 - u0),
+			LIM_ALPHA*(u0 - ro[iCell - 1][0] - ro[iCell - 1][2] / 12.0));
+		if (u1l != u1) {
+			ro[iCell][0] = u0;
+			ro[iCell][1] = u1l;
+			ro[iCell][2] = 0.0;
+		}
+
+		u0 = ru[iCell][0] + ru[iCell][2] / 12.0;
+		u1 = ru[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ru[iCell][0] + ru[iCell][2] / 12.0 - u0),
+			LIM_ALPHA*(u0 - ru[iCell - 1][0] - ru[iCell - 1][2] / 12.0));
+		if (u1l != u1) {
+			ru[iCell][0] = u0;
+			ru[iCell][1] = u1l;
+			ru[iCell][2] = 0.0;
+		}
+
+		u0 = re[iCell][0] + re[iCell][2] / 12.0;
+		u1 = re[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(re[iCell][0] + re[iCell][2] / 12.0 - u0),
+			LIM_ALPHA*(u0 - re[iCell - 1][0] - re[iCell - 1][2] / 12.0));
+		if (u1l != u1) {
+			re[iCell][0] = u0;
+			re[iCell][1] = u1l;
+			re[iCell][2] = 0.0;
+		}
+
+	}
+}
 
 
 double getF(int i, int iCell, double x) {
@@ -974,13 +1363,44 @@ double getDF(int i, int iCell, double x) {
 		return 1.0 / h;
 	}
 	else if (i == 2) {
-		return 2.0*(x - (XMIN + (iCell + 1)*h*0.5)) / h / h;
+		return 2.0*(x - cellC[iCell]) / h / h;
 	}
 	printf("ERROR: bad getF() argument!");
 	return 0.0;
 
 } // getF
 
+
+//double getF(int i, int iCell, double x) {
+//	if (i == 0) {
+//		return 1.0;
+//	}
+//	else if (i == 1) {
+//		return (x - cellC[iCell]);
+//	}
+//	else if (i == 2) {
+//		return ((x - cellC[iCell]))*((x - cellC[iCell]));
+//	}
+//	printf("ERROR: bad getF() argument!");
+//	return 0.0;
+//
+//} // getF
+//
+//double getDF(int i, int iCell, double x) {
+//	if (i == 0) {
+//		return 0.0;
+//	}
+//	else if (i == 1) {
+//		return 1.0;
+//	}
+//	else if (i == 2) {
+//		return 2.0*(x - cellC[iCell]);
+//	}
+//	printf("ERROR: bad getF() argument!");
+//	return 0.0;
+//
+//} // getF
+//
 
 
 

@@ -24,7 +24,7 @@ void roe_orig(double& RI, double& EI, double& PI, double& UI, double& VI, double
 
 	double EB = PB / (RB*AGAM);
 	double EE = PE / (RE*AGAM);
-	EI = (fSB * EB + fSE * EE) * fS_;
+	//EI = (fSB * EB + fSE * EE) * fS_;
 	//TI = ( fSB * TB + fSE * TE ) * fS_;
 
 
@@ -35,7 +35,8 @@ void roe_orig(double& RI, double& EI, double& PI, double& UI, double& VI, double
 
 	PI = (HI - (UI*UI + VI*VI + WI*WI)*0.5) * RI * (fG - 1.0) / fG;
 
-
+	// TODO:
+	EI = PI / (RI*AGAM);
 
 
 }

@@ -76,11 +76,21 @@ struct CSRMatrix
 		return 0.0;
 	}
 
+
+
 	void add(int i, int j, double aa) {
 		set(i, j, get(i,j)+aa);
 	}
 
 	void print() {
+		//double eps = 0.0;
+		//for (int i = 0 ; i < n; i++) {
+		//	for (int j = 0 ; j < n; j++) {
+		//		eps += fabs(get(i,j)-get(j,i));
+		//	}
+		//}
+		//printf("SYMMETRY: %25.16e\n", eps);
+		//return; 
 		FILE * fp = fopen("matr.txt", "w");
 		for (int i = 0; i < n; i++) {
 			for (int j = 0; j < n; j++) {

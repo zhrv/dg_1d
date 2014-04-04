@@ -10,7 +10,7 @@ void roe_orig(double& RI, double& EI, double& PI, double& UI, double& VI, double
 
 	// Ñץולא ROE
 
-	double fG = GAM;
+	//double fG = GAM;
 
 	double fSB = sqrt(RB);
 	double fSE = sqrt(RE);
@@ -33,7 +33,7 @@ void roe_orig(double& RI, double& EI, double& PI, double& UI, double& VI, double
 
 	double HI = (fSB * HB + fSE * HE) * fS_;
 
-	PI = (HI - (UI*UI + VI*VI + WI*WI)*0.5) * RI * (fG - 1.0) / fG;
+	PI = (HI - (UI*UI + VI*VI + WI*WI)*0.5) * RI * AGAM / GAM;
 
 	// TODO:
 	EI = PI / (RI*AGAM);

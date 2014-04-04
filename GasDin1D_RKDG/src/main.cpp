@@ -6,9 +6,9 @@
 
 const double	CFL		= 1.0;
 
-const double	LIM_ALPHA = 1.5;
+const double	LIM_ALPHA = 1.25;
 
-const int		N		= 200;
+const int		N		= 100;
 const double	XMIN	= -1.0; 
 const double	XMAX	=  1.0;
 const double	EPS		= 1.0e-2;
@@ -31,7 +31,7 @@ double **cellGP, **cellGW, *cellC;
 double h	=	(XMAX-XMIN)/N;
 double tau	=	1.0e-4;
 
-#define FLUX     rim_orig
+#define FLUX     roe_orig
 #define FLUX_RHS rim_orig
 
 Solver *S;
@@ -48,16 +48,17 @@ void done();
 void primToCons(double r, double p, double u, double &ro, double &ru, double &re);
 void consToPrim(double &r, double &p, double &u, double ro, double ru, double re);
 
-void init();
 void calcIntegral();
 void calcMatrWithTau();
 void calcMatrFlux();
 void calcRHS();
 void calcLimiter();
+void calcLimiter_II();
 
 
 int main(int argc, char** argv) 
 {
+	
 	init();
 	double t = 0.0;
 	int step = 0;
@@ -88,6 +89,7 @@ int main(int argc, char** argv)
 		}
 
 		calcLimiter();
+		calcLimiter_II();
 
 		for (int iCell = 0, ind = 0; iCell < N; iCell++, ind += 9) {
 			consToPrim(r[iCell], p[iCell], u[iCell], ro[iCell][0], ru[iCell][0], re[iCell][0]);
@@ -648,7 +650,7 @@ void calcMatrFlux() {
 					addMatr3ToMatr9(matr9, matr, ii, jj);
 				}
 			}
-			S->addMatrElement(iCell, iCell - 1, matr9);
+			S->addMatrElement(iCell, iCell-1, matr9);
 			//call Solver_AddMatr9(matr, m9, iCell, iCell + 1)
 
 
@@ -1336,6 +1338,36 @@ void calcLimiter() {
 			re[iCell][2] = 0.0;
 		}
 
+	}
+}
+
+void calcLimiter_II() {
+	double x[5];
+	for (int i = 0; i < N; i++) {
+		x[0] = cellC[i];
+		x[1] = cellGP[i][0];
+		x[2] = cellGP[i][1];
+		x[3] = cellC[i] - 0.5*h;
+		x[4] = cellC[i] + 0.5*h;
+		for (int k = 0; k < 5; k++) {
+			double fRO = getField(0, i, x[k]);
+			double fRU = getField(1, i, x[k]);
+			double fRE = getField(2, i, x[k]);
+			double r = fRO;
+			double p = (fRE - 0.5*fRU*fRU / fRO)*AGAM;
+			if ((r < EPS) || (p < EPS)) {
+				ro[i][0] += ro[i][2] / 12.0;
+				ro[i][1] = 0.0;
+				ro[i][2] = 0.0;
+				ru[i][0] += ru[i][2] / 12.0;
+				ru[i][1] = 0.0;
+				ru[i][2] = 0.0;
+				re[i][0] += re[i][2] / 12.0;
+				re[i][1] = 0.0;
+				re[i][2] = 0.0;
+			}
+			continue;
+		}
 	}
 }
 

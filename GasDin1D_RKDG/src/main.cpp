@@ -6,18 +6,19 @@
 
 const double	CFL		= 1.0;
 
-const double	LIM_ALPHA = 1.25;
+const double	LIM_ALPHA = 1.5;
 
 const int		N		= 100;
 const double	XMIN	= -1.0; 
 const double	XMAX	=  1.0;
-const double	EPS		= 1.0e-2;
+const double	EPS		= 1.0e-3;
 const double	GAM		= 1.4;
 const double	AGAM	= GAM-1.0;
 const double	TMAX	= 0.2;
 
 const int		MAX_ITER	= 5000;
 const int		SAVE_STEP	= 100;
+const int		PRINT_STEP	= 25;
 
 double **ro, **ru, **re;
 double *r, *u, *e, *p; 
@@ -96,7 +97,9 @@ int main(int argc, char** argv)
 		}
 
 
-		printf("%10d | ITER: %4d | RO: ... | RU: ... | RE ... \n", step, maxIter);
+		if (step % PRINT_STEP == 0) {
+			printf("%10d | ITER: %4d | RO: ... | RU: ... | RE ... \n", step, maxIter);
+		}
 		if (step % SAVE_STEP == 0) {
 			char str[50];
 			sprintf(str, "res_%010d.csv", step);
@@ -382,6 +385,20 @@ void calcMatrAPM(double c2, double u, double** Am, double** Ap) {
 
 	calcMatrL(c2, u, L);
 	calcMatrR(c2, u, R);
+
+	//double E1[3][3], E2[3][3];
+
+	//for (int i = 0; i < 3; i++) {
+	//	for (int j = 0; j < 3; j++) {
+	//		E1[i][j] = 0.0;
+	//		E2[i][j] = 0.0;
+	//		for (int k = 0; k < 3; k++) {
+	//			E1[i][j] += L[i][k] * R[k][j];
+	//			E2[i][j] += R[i][k] * L[k][j];
+	//		}
+	//	}
+	//}
+
 
 	for (int i = 0; i < 3; i++) {
 		for (int j = 0; j < 3; j++) {

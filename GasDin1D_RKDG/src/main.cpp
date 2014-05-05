@@ -1382,8 +1382,9 @@ void calcLimiter_II() {
 				re[i][0] += re[i][2] / 12.0;
 				re[i][1] = 0.0;
 				re[i][2] = 0.0;
+				break;
 			}
-			continue;
+			
 		}
 	}
 }

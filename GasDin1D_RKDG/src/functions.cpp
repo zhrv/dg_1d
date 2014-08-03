@@ -1,6 +1,147 @@
 #include <cstdio>
 #include <cmath>
 
+double **matr, *vect, **matr1, **matr9, ***matrM;
+double **A, **Ap, **Am, **L, **R, ***mA;
+
+double _max_(double a, double b) {
+	if (a > b) return a;
+	return b;
+}
+
+
+void calcMatrL(double c2, double u, double GAM, double** L)
+{
+	double cz, kk, deta;
+
+	cz = sqrt(c2);
+	kk = GAM - 1.0;
+	deta = 0.5*kk*u*u;
+
+	L[0][0] = -c2 + deta;
+	L[0][1] = -kk*u;
+	L[0][2] = kk;
+
+	L[1][0] = -cz*u + deta;
+	L[1][1] = cz - kk*u;
+	L[1][2] = kk;
+
+	L[2][0] = cz*u + deta;
+	L[2][1] = -cz - kk*u;
+	L[2][2] = kk;
+
+}
+
+void calcMatrR(double c2, double u, double GAM, double** R)
+{
+	double cz, kk, deta;
+
+	cz = sqrt(c2);
+	kk = GAM - 1.0;
+	R[0][0] = -1.0 / c2;
+	R[0][1] = 0.5 / c2;
+	R[0][2] = 0.5 / c2;
+
+	R[1][0] = -u / c2;
+	R[1][1] = 0.5*u / c2 + 0.5 / cz;
+	R[1][2] = 0.5*u / c2 - 0.5 / cz;
+
+	R[2][0] = -0.5*u*u / c2;
+	R[2][1] = 0.25*u*u / c2 + 0.5 / kk + 0.5*u / cz;
+	R[2][2] = 0.25*u*u / c2 + 0.5 / kk - 0.5*u / cz;
+
+}
+
+void calcMatrA(double c2, double u, double GAM, double** A) {
+	double cz = sqrt(c2);
+	double kk = GAM - 1.0;
+
+	A[0][0] = 0.0;
+	A[0][1] = 1.0;
+	A[0][2] = 0.0;
+
+	A[1][0] = (GAM - 3.0)*u*u / 2.0;
+	A[1][1] = (3.0 - GAM)*u;
+	A[1][2] = kk;
+
+	A[2][0] = kk*(u*u*u) - u*(c2 / kk + GAM*u*u / 2.0);
+	A[2][1] = c2 / kk + GAM*u*u / 2.0 - 1.5*kk*u*u;
+	A[2][2] = GAM*u;
+}
+
+void calcMatrAPM(double c2, double u, double GAM, double** Am, double** Ap) {
+	double cz = sqrt(c2);
+	double ll = fabs(u) + cz;
+
+	calcMatrL(c2, u, GAM, L);
+	calcMatrR(c2, u, GAM, R);
+
+	//double E1[3][3], E2[3][3];
+
+	//for (int i = 0; i < 3; i++) {
+	//	for (int j = 0; j < 3; j++) {
+	//		E1[i][j] = 0.0;
+	//		E2[i][j] = 0.0;
+	//		for (int k = 0; k < 3; k++) {
+	//			E1[i][j] += L[i][k] * R[k][j];
+	//			E2[i][j] += R[i][k] * L[k][j];
+	//		}
+	//	}
+	//}
+
+
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++) {
+			if (i != j) matr1[i][j] = 0.0;
+		}
+	}
+
+	// Am
+	matr1[0][0] = 0.5*(u - fabs(u));
+	matr1[1][1] = 0.5*(u + cz - fabs(u + cz));
+	matr1[2][2] = 0.5*(u - cz - fabs(u - cz));
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++)	{
+			matr[i][j] = 0.0;
+			for (int k = 0; k < 3; k++) {
+				matr[i][j] += R[i][k] * matr1[k][j];
+			}
+		}
+	}
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++)	{
+			Am[i][j] = 0.0;
+			for (int k = 0; k < 3; k++) {
+				Am[i][j] += matr[i][k] * L[k][j];
+			}
+		}
+	}
+
+	// Ap
+	matr1[0][0] = 0.5*(u + fabs(u));
+	matr1[1][1] = 0.5*(u + cz + fabs(u + cz));
+	matr1[2][2] = 0.5*(u - cz + fabs(u - cz));
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++)	{
+			matr[i][j] = 0.0;
+			for (int k = 0; k < 3; k++) {
+				matr[i][j] += R[i][k] * matr1[k][j];
+			}
+		}
+	}
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++)	{
+			Ap[i][j] = 0.0;
+			for (int k = 0; k < 3; k++) {
+				Ap[i][j] += matr[i][k] * L[k][j];
+			}
+		}
+	}
+
+}
+
+
+
 
 void roe_orig(double& RI, double& EI, double& PI, double& UI, double& VI, double& WI,
 	double RB, double PB, double UB, double VB, double WB,
@@ -241,3 +382,179 @@ void URS(int iCase, double& r, double& p, double& e, double gam) {
 		break;
 	}
 }// URS
+
+/*
+// функция расчёта конвективных потоков методом КИРа
+REAL Galerkin::FLUX_KIR(Param &rP, Param &rE, const REAL fFieldP, const REAL fFieldE, const VECTOR &vN, const INDEX idField, const POINT &pt)
+{
+	REAL fFlux;
+
+	static Param rB;
+	static VECTOR_5 vQFP, vQFE;
+	static VECTOR_5  vUP, vUE;
+
+	rP.UN = rP.U * vN.x + rP.V * vN.y + rP.W * vN.z;
+	rE.UN = rE.U * vN.x + rE.V * vN.y + rE.W * vN.z;
+
+	{{ // Схема ROE
+		rB.GAMA = rP.GAMA;
+
+		REAL fG = rP.GAMA;
+
+		REAL fSP = sqrt(rP.R);
+		REAL fSE = sqrt(rE.R);
+		REAL fS_ = 1.0 / (fSP + fSE);
+
+		rB.R = fSP * fSE;
+
+		rB.U = (fSP * rP.U + fSE * rE.U) * fS_;
+		rB.V = (fSP * rP.V + fSE * rE.V) * fS_;
+		rB.W = (fSP * rP.W + fSE * rE.W) * fS_;
+
+		rB.E = (fSP * rP.E + fSE * rE.E) * fS_;
+		rB.T = (fSP * rP.T + fSE * rE.T) * fS_;
+
+		rP.H = rP.E + rP.EK() + rP.P / rP.R;
+		rE.H = rE.E + rE.EK() + rE.P / rE.R;
+
+		rB.H = (fSP * rP.H + fSE * rE.H) * fS_;
+
+		rB.P = (rB.H - rB.EK()) * rB.R * (fG - 1.0) / fG;
+
+		rB.CZ = sqrt(fG * rB.P / rB.R);
+
+		rB.UN = rB.U * vN.x + rB.V * vN.y + rB.W * vN.z;
+	}}
+
+	static MATRIX_5 mA;
+	CalcMatrixA(rB, vN, mA);
+
+	vUP(0) = 1.0;
+	vUP(1) = rP.U;
+	vUP(2) = rP.V;
+	vUP(3) = rP.W;
+	vUP(4) = rP.E + rP.EK();
+	vUP *= rP.R;
+
+	vUE(0) = 1.0;
+	vUE(1) = rE.U;
+	vUE(2) = rE.V;
+	vUE(3) = rE.W;
+	vUE(4) = rE.E + rE.EK();
+	vUE *= rE.R;
+
+	vQFP = vUP;
+	vQFP *= rP.UN;
+	vQFP(1) += rP.P * vN.x;
+	vQFP(2) += rP.P * vN.y;
+	vQFP(3) += rP.P * vN.z;
+	vQFP(4) += rP.P * rP.UN;
+
+	vQFE = vUE;
+	vQFE *= rE.UN;
+	vQFE(1) += rE.P * vN.x;
+	vQFE(2) += rE.P * vN.y;
+	vQFE(3) += rE.P * vN.z;
+	vQFE(4) += rE.P * rE.UN;
+
+	static VECTOR_5  vQF;
+	// vQF = 0.5 * ( vQFE + vQFP + mA * ( vUP - vUE ) );
+	vQF = vUP;
+	vQF -= vUE;
+	vQF = mA * vQF;
+
+	vQF += vQFE;
+	vQF += vQFP;
+	vQF *= 0.5;
+
+	fFlux = vQF(idField - 1);
+	return fFlux;
+
+} // FLUX_KIR
+*/
+
+
+void flux_cir( double &fr, double &fu, double &fe,
+	double rb, double pb, double ub, double re, double pe, double ue, double GAM ) 
+{
+	double ri, ei, pi, ui, vi, wi, vb = 0, ve = 0, wb = 0, we = 0;
+	double AGAM = GAM - 1.0;
+	roe_orig(ri, ei, pi, ui, vi, wi,
+		rb, pb, ub, vb, wb,
+		re, pe, ue, ve, we, GAM);
+	
+	double c2 = GAM*pi / ri;
+	double cz = sqrt(c2);
+
+	calcMatrL(c2, ui, GAM, L);
+	calcMatrR(c2, ui, GAM, R);
+
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++) {
+			if (i != j) matr1[i][j] = 0.0;
+		}
+	}
+
+	// Am
+	matr1[0][0] = fabs(ui);
+	matr1[1][1] = fabs(ui + cz);
+	matr1[2][2] = fabs(ui - cz);
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++)	{
+			matr[i][j] = 0.0;
+			for (int k = 0; k < 3; k++) {
+				matr[i][j] += R[i][k] * matr1[k][j];
+			}
+		}
+	}
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++)	{
+			Am[i][j] = 0.0;
+			for (int k = 0; k < 3; k++) {
+				Am[i][j] += matr[i][k] * L[k][j];
+			}
+		}
+	}
+
+	double U[3];
+
+	ri = re-rb;
+	ui = re*ue-rb*ub;
+	ei = (pe / AGAM + re*ue*ue*0.5) - (pb / AGAM + rb*ub*ub*0.5);
+
+	U[0] = ri*Am[0][0] + ui*Am[0][1] + ei*Am[0][2];
+	U[1] = ri*Am[1][0] + ui*Am[1][1] + ei*Am[1][2];
+	U[2] = ri*Am[2][0] + ui*Am[2][1] + ei*Am[2][2];
+
+	fr = 0.5*(rb*ub + re*ue - U[0]);
+	fu = 0.5*(rb*ub*ub + pb + re*ue*ue + pe - U[1]);
+	fe = 0.5*((pb / AGAM + rb*ub*ub*0.5 + pb)*ub + (pe / AGAM + re*ue*ue*0.5 + pe)*ue - U[2]);
+}
+
+void flux_lf(double &fr, double &fu, double &fe,
+	double rb, double pb, double ub, double re, double pe, double ue, double GAM) 
+{
+	double AGAM = GAM - 1.0;
+	double alpha = _max_(fabs(ub) + sqrt(GAM*pb / rb), fabs(ue) + sqrt(GAM*pe / re));
+	fr = 0.5*(rb*ub + re*ue - alpha*(re - rb));
+	fu = 0.5*(rb*ub*ub + pb + re*ue*ue + pe - alpha*(re*ue - rb*ub));
+	fe = 0.5*((pb / AGAM + rb*ub*ub*0.5 + pb)*ub + (pe / AGAM + re*ue*ue*0.5 + pe)*ue - alpha*((pe / AGAM + re*ue*ue*0.5) - (pb / AGAM + rb*ub*ub*0.5)));
+}
+
+void flux_rim(double &fr, double &fu, double &fe,
+	double RB, double PB, double UB,
+	double RE, double PE, double UE, double GAM) 
+{
+	double ri, ei, pi, ui, vi, wi, VB=0, VE=0, WB=0, WE=0;
+	double AGAM = GAM - 1.0;
+	rim_orig(ri, ei, pi, ui, vi, wi,
+		RB, PB, UB, VB, WB,
+		RE, PE, UE, VE, WE, GAM);
+	fr = ri*ui;
+	fu = ri*ui*ui + pi;
+	fe = (pi / AGAM + ri*ui*ui*0.5 + pi)*ui;
+
+}
+
+
+

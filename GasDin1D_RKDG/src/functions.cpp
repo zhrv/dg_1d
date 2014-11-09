@@ -70,6 +70,8 @@ void calcMatrA(double c2, double u, double GAM, double** A) {
 }
 
 void calcMatrAPM(double c2, double u, double GAM, double** Am, double** Ap) {
+	double matr[3][3], matr1[3][3];
+	
 	double cz = sqrt(c2);
 	double ll = fabs(u) + cz;
 
@@ -355,12 +357,12 @@ lbl157:
 
 }
 
-void addMatr3ToMatr9(double **m9, double **m3, int i, int j) {
+void addMatr3ToMatr9(double **m9, double **m3, int i, int j, int m3size) {
 
-	int ii = i * 3;
-	int jj = j * 3;
-	for (int i1 = 0; i1 < 3; i1++) {
-		for (int j1 = 0; j1 < 3; j1++) {
+	int ii = i * m3size;
+	int jj = j * m3size;
+	for (int i1 = 0; i1 < m3size; i1++) {
+		for (int j1 = 0; j1 < m3size; j1++) {
 			m9[ii + i1][jj + j1] = m9[ii + i1][jj + j1] + m3[i1][j1];
 		}
 	}

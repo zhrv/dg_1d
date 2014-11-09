@@ -1,7 +1,8 @@
 #include "Solver.h"
 
-void Solver::init(int cellsCount) {
-	int n = cellsCount*9;
+void Solver::init(int cellsCount, int bSize) {
+	blockSize = bSize;
+	int n = cellsCount*blockSize;
 	a = new CSRMatrix(n);
 	b = new double[n];
 	x = new double[n];
@@ -21,31 +22,31 @@ Solver::~Solver() {
 }
 
 void Solver::setMatrElement(int i, int j, double** matr9) {
-	for (int ii = 0; ii < 9; ii++) {
-		for (int jj = 0; jj < 9; jj++) {
-			a->set(ii+i*9, ii+j*9, matr9[ii][jj]);
+	for (int ii = 0; ii < blockSize; ii++) {
+		for (int jj = 0; jj < blockSize; jj++) {
+			a->set(ii + i*blockSize, ii + j * blockSize, matr9[ii][jj]);
 		}
 	}
 }
 
 void Solver::setRightElement(int i, double* vect9) {
-	for (int ii = 0; ii < 9; ii++) {
-		b[ii+i*9] = vect9[ii];
+	for (int ii = 0; ii < blockSize; ii++) {
+		b[ii + i*blockSize] = vect9[ii];
 	}
 }
 
 
 void Solver::addMatrElement(int i, int j, double** matr9) {
-	for (int ii = 0; ii < 9; ii++) {
-		for (int jj = 0; jj < 9; jj++) {
-			a->add(ii+i*9, ii+j*9, matr9[ii][jj]);
+	for (int ii = 0; ii < blockSize; ii++) {
+		for (int jj = 0; jj < blockSize; jj++) {
+			a->add(ii + i*blockSize, ii + j * blockSize, matr9[ii][jj]);
 		}
 	}
 }
 
 void Solver::addRightElement(int i, double* vect9) {
-	for (int ii = 0; ii < 9; ii++) {
-		b[ii+i*9] += vect9[ii];
+	for (int ii = 0; ii < blockSize; ii++) {
+		b[ii + i*blockSize] += vect9[ii];
 	}
 }
 

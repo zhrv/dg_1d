@@ -3,15 +3,19 @@
 #include <cmath>
 #include "Solver.h"
 #include "functions.h"
+#include <float.h>
 
-const double	CFL		= 1.0;
+const int		FUNC_COUNT = 3;
+const int		MATR_BLOCK = 3 * FUNC_COUNT;
+
+const double	CFL		= 2.5e-3;
 
 const double	LIM_ALPHA = 2.0;
 
-const int		N		= 500;
+const int		N		= 100;
 const double	XMIN	= -1.0; 
 const double	XMAX	=  1.0;
-const double	EPS		= 1.0e-3;
+const double	EPS		= 1.0e-5;
 const double	GAM		= 1.4;
 const double	AGAM	= GAM-1.0;
 const double	TMAX	= 0.2;
@@ -31,7 +35,7 @@ double **cellGP, **cellGW, *cellC;
 double *smMu;
 
 double h	=	(XMAX-XMIN)/N;
-double tau	=	1.0e-5;
+double tau = CFL*h; // <= 1.e-5
 
 #define FLUX     roe_orig
 #define FLUX_RHS flux_rim
@@ -68,6 +72,9 @@ void calcSmoother();
 
 int main(int argc, char** argv) 
 {
+#ifdef _DEBUG
+	_controlfp(~(_MCW_EM & (~_EM_INEXACT) & (~_EM_UNDERFLOW)), _MCW_EM);
+#endif
 	init();
 	double t = 0.0;
 	int step = 0;
@@ -85,16 +92,14 @@ int main(int argc, char** argv)
 		
 		S->solve(EPS, maxIter);
 		
-		for (int iCell = 0, ind = 0; iCell < N; iCell++, ind += 9) {
-			ro[iCell][0] += S->x[ind + 0];
-			ro[iCell][1] += S->x[ind + 1];
-			ro[iCell][2] += S->x[ind + 2];
-			ru[iCell][0] += S->x[ind + 3];
-			ru[iCell][1] += S->x[ind + 4];
-			ru[iCell][2] += S->x[ind + 5];
-			re[iCell][0] += S->x[ind + 6];
-			re[iCell][1] += S->x[ind + 7];
-			re[iCell][2] += S->x[ind + 8];
+		for (int iCell = 0, ind = 0; iCell < N; iCell++, ind += MATR_BLOCK) {
+			int shift = 0;
+			for (int j = 0; j < FUNC_COUNT; j++)
+				ro[iCell][j] += S->x[ind + (shift++)];
+			for (int j = 0; j < FUNC_COUNT; j++)
+				ru[iCell][j] += S->x[ind + (shift++)];
+			for (int j = 0; j < FUNC_COUNT; j++)
+				re[iCell][j] += S->x[ind + (shift++)];
 		}
 
 		if (USE_LIMITER_I)  LIMITER_I();
@@ -139,46 +144,48 @@ void memAlloc() {
 	cellGW = new double*[N];
 	cellC = new double[N];
 	for (int i = 0; i < N; i++) {
-		ro[i] = new double[3];
-		ru[i] = new double[3];
-		re[i] = new double[3];
-		ro_[i] = new double[3];
-		ru_[i] = new double[3];
-		re_[i] = new double[3];
+		ro[i] = new double[FUNC_COUNT];
+		ru[i] = new double[FUNC_COUNT];
+		re[i] = new double[FUNC_COUNT];
+		ro_[i] = new double[FUNC_COUNT];
+		ru_[i] = new double[FUNC_COUNT];
+		re_[i] = new double[FUNC_COUNT];
 		cellGP[i] = new double[2];
 		cellGW[i] = new double[2];
-		matrM[i] = new double*[3];
-		for (int j = 0; j < 3; j++) {
-			matrM[i][j] = new double[3];
+		matrM[i] = new double*[FUNC_COUNT];
+		for (int j = 0; j < FUNC_COUNT; j++) {
+			matrM[i][j] = new double[FUNC_COUNT];
 		}
 	}
 	r = new double[N];
 	u = new double[N];
 	p = new double[N];
-	vect = new double[3];
-	matr = new double*[3];
-	matr1 = new double*[3];
+	vect = new double[FUNC_COUNT];
+	matr = new double*[FUNC_COUNT];
+	matr1 = new double*[FUNC_COUNT];
+	for (int i = 0; i < FUNC_COUNT; i++) {
+		matr[i] = new double[FUNC_COUNT];
+		matr1[i] = new double[FUNC_COUNT];
+	}
 	A = new double*[3];
 	L = new double*[3];
 	R = new double*[3];
 	Am = new double*[3];
 	Ap = new double*[3];
 	for (int i = 0; i < 3; i++) {
-		matr[i] = new double[3];
-		matr1[i] = new double[3];
 		A[i] = new double[3];
 		Am[i] = new double[3];
 		Ap[i] = new double[3];
 		L[i] = new double[3];
 		R[i] = new double[3];
 	}
-	matr9 = new double*[9];
-	for (int i = 0; i < 9; i++) {
-		matr9[i] = new double[9];
+	matr9 = new double*[MATR_BLOCK];
+	for (int i = 0; i < MATR_BLOCK; i++) {
+		matr9[i] = new double[MATR_BLOCK];
 	}
 
 	mA = new double**[2];
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < 2; i++) {
 		mA[i] = new double*[3];
 		for (int j = 0; j < 3; j++) {
 			mA[i][j] = new double[3];
@@ -197,7 +204,7 @@ void memFree() {
 		delete[] re_[i];
 		delete[] cellGP[i];
 		delete[] cellGW[i];
-		for (int j = 0; j < 3; j++) {
+		for (int j = 0; j < FUNC_COUNT; j++) {
 			delete[] matrM[i][j];
 		}
 		delete[] matrM[i];
@@ -214,7 +221,7 @@ void memFree() {
 	delete[] r;
 	delete[] u;
 	delete[] p;
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < FUNC_COUNT; i++) {
 		delete[] A[i];
 		delete[] Am[i];
 		delete[] Ap[i];
@@ -231,13 +238,13 @@ void memFree() {
 	delete[] matr;
 	delete[] matr1;
 	delete[] vect;
-	for (int i = 0; i < 9; i++) {
+	for (int i = 0; i < 3 * FUNC_COUNT; i++) {
 		delete[] matr9[i];
 	}
 	delete[] matr9;
 
-	for (int i = 0; i < 3; i++) {
-		for (int j = 0; j < 3; j++) {
+	for (int i = 0; i < FUNC_COUNT; i++) {
+		for (int j = 0; j < FUNC_COUNT; j++) {
 			delete[] mA[i][j];
 		}
 		delete[] mA[i];
@@ -250,8 +257,8 @@ void memFree() {
 void calcMassMatr() {
 	for (int iCell = 0; iCell < N; iCell++){
 
-		for (int i = 0; i < 3; i++) {
-			for (int j = 0; j < 3; j++){
+		for (int i = 0; i < FUNC_COUNT; i++) {
+			for (int j = 0; j < FUNC_COUNT; j++){
 				matrM[iCell][i][j] = 0.0;
 				for (int iGP = 0; iGP < 2; iGP++) {
 					double x = cellGP[iCell][iGP];
@@ -280,41 +287,56 @@ void init() {
 	}
 
 	S = SolverFactory::create(SOLVER_TYPE_ZEIDEL);
-	S->init(N);
+	S->init(N, MATR_BLOCK);
 	for (int i = 0; i < N; i++) {
 		double x = cellC[i];
-		// Sod
-		//if (x < 0.0) {
-		//	r[i] = 1.0;
-		//	p[i] = 1.0;
-		//	u[i] = 0.0;
-		//} else {
-		//	r[i] = 0.125;
-		//	p[i] = 0.1;
-		//	u[i] = 0.0;
-		//}
-		// Lax
+		// Sod  !!! XMIN = -1.0; XMAX = 1.0;
 		if (x < 0.0) {
-			r[i] = 0.445;
-			p[i] = 3.528;
-			u[i] = 0.698;
-		}
-		else {
-			r[i] = 0.5;
-			p[i] = 0.571;
+			r[i] = 1.0;
+			p[i] = 1.0;
+			u[i] = 0.0;
+		} else {
+			r[i] = 0.125;
+			p[i] = 0.1;
 			u[i] = 0.0;
 		}
-
+		// Lax  !!! XMIN = -1.0; XMAX = 1.0;
+		//if (x < 0.0) {
+		//	r[i] = 0.445;
+		//	p[i] = 3.528;
+		//	u[i] = 0.698;
+		//}
+		//else {
+		//	r[i] = 0.5;
+		//	p[i] = 0.571;
+		//	u[i] = 0.0;
+		//}
+		// Blast waves !!! XMIN = 0.0; XMAX = 1.0;
+		//if (x <= 0.1) {
+		//	r[i] = 1.0;
+		//	p[i] = 2500.0 * r[i] * AGAM;
+		//	u[i] = 0.0;
+		//}
+		//else if (x >= 0.9) {
+		//	r[i] = 1.0;
+		//	p[i] = 250.0 * r[i] * AGAM;
+		//	u[i] = 0.0;
+		//}
+		//else {
+		//	r[i] = 1.0;
+		//	p[i] = 0.025 * r[i] * AGAM;
+		//	u[i] = 0.0;
+		//}
 		//r[i] = 0.125;
 		//p[i] = 0.1;
 		//u[i] = 1.0;
 
 		primToCons(r[i], p[i], u[i], ro[i][0], ru[i][0], re[i][0]);
-		ro[i][1] = ro[i][2] = 0.0;
-		ru[i][1] = ru[i][2] = 0.0;
-		re[i][1] = re[i][2] = 0.0;
-		double dt = CFL*h / (fabs(u[i]) + sqrt(GAM*p[i] / r[i]));
-		if (dt < tau) tau = dt;
+		for (int j = 1; j < FUNC_COUNT; j++) {
+			ro[i][j] = ru[i][j] = re[i][j] = 0.0;
+		}
+		//double dt = CFL*h / (fabs(u[i]) + sqrt(GAM*p[i] / r[i]));
+		//if (dt < tau) tau = dt;
 	}
 	printf("TAU = %25.16e\n\n", tau);
 
@@ -349,8 +371,8 @@ void calcIntegral() {
 
 	for (int iCell = 0; iCell < N; iCell++) {
 
-		for (int i = 0; i < 9; i++) {
-			for (int j = 0; j < 9; j++) {
+		for (int i = 0; i < MATR_BLOCK; i++) {
+			for (int j = 0; j < MATR_BLOCK; j++) {
 				matr9[i][j] = 0.0;
 			}
 		}
@@ -365,13 +387,14 @@ void calcIntegral() {
 			fE = fRE / fRO - 0.50*(fU*fU);
 			URS(1, fRO, fP, fE, GAM);
 			double c2 = GAM*fP / fRO;
-			calcMatrA(fU, c2, GAM, mA[k]);
+			//calcMatrA(fU, c2, GAM, mA[k]);
+			calcMatrA(c2, fU, GAM, mA[k]);
 		}
 
 		for (int ii = 0; ii < 3; ii++) {
 			for (int jj = 0; jj < 3;jj++){
-				for (int i = 0; i < 3;i++) {
-					for (int j = 0; j < 3; j++) {
+				for (int i = 0; i < FUNC_COUNT; i++) {
+					for (int j = 0; j < FUNC_COUNT; j++) {
 						matr[i][j] = 0.0;
 						for (int k = 0; k < 2; k++) {
 							double x = cellGP[iCell][k];
@@ -380,7 +403,7 @@ void calcIntegral() {
 					}
 				}
 				//call Solver_AddMatr3(m9, m3, ii, jj)
-				addMatr3ToMatr9(matr9, matr, ii, jj);
+				addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 			}
 		}
 
@@ -395,21 +418,21 @@ void calcIntegral() {
 void calcMatrWithTau() {
 	for (int iCell = 0; iCell < N; iCell++) {
 
-		for (int i = 0; i < 9; i++) {
-			for (int j = 0; j < 9; j++) {
+		for (int i = 0; i < MATR_BLOCK; i++) {
+			for (int j = 0; j < MATR_BLOCK; j++) {
 				matr9[i][j] = 0.0;
 			}
 		}
 
 
-		for (int i = 0; i < 3; i++) {
-			for (int j = 0; j < 3; j++) {
+		for (int i = 0; i < FUNC_COUNT; i++) {
+			for (int j = 0; j < FUNC_COUNT; j++) {
 				matr[i][j] = matrM[iCell][i][j] / tau;
 			}
 		}
 
 		for (int ii = 0; ii < 3; ii++) {
-			addMatr3ToMatr9(matr9, matr, ii, ii);
+			addMatr3ToMatr9(matr9, matr, ii, ii, FUNC_COUNT);
 		}
 
 		S->addMatrElement(iCell, iCell, matr9);
@@ -427,8 +450,8 @@ void calcMatrFlux() {
 
 		{ //!< вычисляем потоки на границе iCell+1/2
 
-			for (int i = 0; i < 9; i++){
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++){
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
@@ -452,20 +475,20 @@ void calcMatrFlux() {
 
 
 
-			for (int i = 0; i < 9; i++) {
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++) {
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
 
 			for (int ii = 1; ii < 3; ii++){
 				for (int jj = 1; jj < 3; jj++){
-					for (int i = 0; i < 3; i++){
-						for (int j = 0; j < 3; j++){
+					for (int i = 0; i < FUNC_COUNT; i++){
+						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell + 1, x1);
 						}
 					}
-					addMatr3ToMatr9(matr9, matr, ii, jj);
+					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 				}
 			}
 
@@ -473,19 +496,19 @@ void calcMatrFlux() {
 			S->addMatrElement(iCell, iCell+1, matr9);
 
 
-			for (int i = 0; i < 9; i++) {
-				for (int j = 0; j < 9; j++) {
+			for (int i = 0; i < MATR_BLOCK; i++) {
+				for (int j = 0; j < MATR_BLOCK; j++) {
 					matr9[i][j] = 0.0;
 				}
 			}
 			for (int ii = 0; ii < 3; ii++){
 				for (int jj = 0; jj < 3; jj++){
-					for (int i = 0; i < 3; i++){
-						for (int j = 0; j < 3; j++){
+					for (int i = 0; i < FUNC_COUNT; i++){
+						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = Ap[ii][jj] * getF(i, iCell, x1)*getF(j, iCell, x1);
 						}
 					}
-					addMatr3ToMatr9(matr9, matr, ii, jj);
+					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 				}
 			}
 			S->addMatrElement(iCell, iCell, matr9);
@@ -497,8 +520,8 @@ void calcMatrFlux() {
 
 		{ //!< вычисляем потоки на границе iCell-1/2
 
-			for (int i = 0; i < 9; i++){
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++){
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
@@ -523,20 +546,20 @@ void calcMatrFlux() {
 
 
 
-			for (int i = 0; i < 9; i++) {
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++) {
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
 
 			for (int ii = 1; ii < 3; ii++){
 				for (int jj = 1; jj < 3; jj++){
-					for (int i = 0; i < 3; i++){
-						for (int j = 0; j < 3; j++){
+					for (int i = 0; i < FUNC_COUNT; i++){
+						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = -Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell, x1);
 						}
 					}
-					addMatr3ToMatr9(matr9, matr, ii, jj);
+					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 				}
 			}
 
@@ -544,19 +567,19 @@ void calcMatrFlux() {
 			S->addMatrElement(iCell, iCell, matr9);
 
 
-			for (int i = 0; i < 9; i++) {
-				for (int j = 0; j < 9; j++) {
+			for (int i = 0; i < MATR_BLOCK; i++) {
+				for (int j = 0; j < MATR_BLOCK; j++) {
 					matr9[i][j] = 0.0;
 				}
 			}
 			for (int ii = 0; ii < 3; ii++){
 				for (int jj = 0; jj < 3; jj++){
-					for (int i = 0; i < 3; i++){
-						for (int j = 0; j < 3; j++){
+					for (int i = 0; i < FUNC_COUNT; i++){
+						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = -Ap[ii][jj] * getF(i, iCell, x1)*getF(j, iCell - 1, x1);
 						}
 					}
-					addMatr3ToMatr9(matr9, matr, ii, jj);
+					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 				}
 			}
 			S->addMatrElement(iCell, iCell-1, matr9);
@@ -575,8 +598,8 @@ void calcMatrFlux() {
 
 		{ //!< вычисляем потоки на границе iCell+1/2
 
-			for (int i = 0; i < 9; i++){
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++){
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
@@ -601,20 +624,20 @@ void calcMatrFlux() {
 
 
 
-			for (int i = 0; i < 9; i++) {
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++) {
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
 
 			for (int ii = 1; ii < 3; ii++){
 				for (int jj = 1; jj < 3; jj++){
-					for (int i = 0; i < 3; i++){
-						for (int j = 0; j < 3; j++){
+					for (int i = 0; i < FUNC_COUNT; i++){
+						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell + 1, x1);
 						}
 					}
-					addMatr3ToMatr9(matr9, matr, ii, jj);
+					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 				}
 			}
 
@@ -622,19 +645,19 @@ void calcMatrFlux() {
 			S->addMatrElement(iCell, iCell+1, matr9);
 
 
-			for (int i = 0; i < 9; i++) {
-				for (int j = 0; j < 9; j++) {
+			for (int i = 0; i < MATR_BLOCK; i++) {
+				for (int j = 0; j < MATR_BLOCK; j++) {
 					matr9[i][j] = 0.0;
 				}
 			}
 			for (int ii = 0; ii < 3; ii++){
 				for (int jj = 0; jj < 3; jj++){
-					for (int i = 0; i < 3; i++){
-						for (int j = 0; j < 3; j++){
+					for (int i = 0; i < FUNC_COUNT; i++){
+						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = Ap[ii][jj] * getF(i, iCell, x1)*getF(j, iCell, x1);
 						}
 					}
-					addMatr3ToMatr9(matr9, matr, ii, jj);
+					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 				}
 			}
 			S->addMatrElement(iCell, iCell, matr9);
@@ -646,8 +669,8 @@ void calcMatrFlux() {
 
 		{ //!< вычисляем потоки на границе iCell-1/2
 
-			for (int i = 0; i < 9; i++){
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++){
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
@@ -670,20 +693,20 @@ void calcMatrFlux() {
 
 
 
-			for (int i = 0; i < 9; i++) {
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++) {
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
 
 			for (int ii = 1; ii < 3; ii++){
 				for (int jj = 1; jj < 3; jj++){
-					for (int i = 0; i < 3; i++){
-						for (int j = 0; j < 3; j++){
+					for (int i = 0; i < FUNC_COUNT; i++){
+						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = -Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell, x1);
 						}
 					}
-					addMatr3ToMatr9(matr9, matr, ii, jj);
+					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 				}
 			}
 
@@ -721,8 +744,8 @@ void calcMatrFlux() {
 
 		{ //!< вычисляем потоки на границе iCell+1/2
 
-			for (int i = 0; i < 9; i++){
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++){
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
@@ -769,19 +792,19 @@ void calcMatrFlux() {
 			//S->addMatrElement(iCell, iCell + 1, matr9);
 
 
-			for (int i = 0; i < 9; i++) {
-				for (int j = 0; j < 9; j++) {
+			for (int i = 0; i < MATR_BLOCK; i++) {
+				for (int j = 0; j < MATR_BLOCK; j++) {
 					matr9[i][j] = 0.0;
 				}
 			}
 			for (int ii = 0; ii < 3; ii++){
 				for (int jj = 0; jj < 3; jj++){
-					for (int i = 0; i < 3; i++){
-						for (int j = 0; j < 3; j++){
+					for (int i = 0; i < FUNC_COUNT; i++){
+						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = Ap[ii][jj] * getF(i, iCell, x1)*getF(j, iCell, x1);
 						}
 					}
-					addMatr3ToMatr9(matr9, matr, ii, jj);
+					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 				}
 			}
 			S->addMatrElement(iCell, iCell, matr9);
@@ -793,8 +816,8 @@ void calcMatrFlux() {
 
 		{ //!< вычисляем потоки на границе iCell-1/2
 
-			for (int i = 0; i < 9; i++){
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++){
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
@@ -819,20 +842,20 @@ void calcMatrFlux() {
 
 
 
-			for (int i = 0; i < 9; i++) {
-				for (int j = 0; j < 9; j++){
+			for (int i = 0; i < MATR_BLOCK; i++) {
+				for (int j = 0; j < MATR_BLOCK; j++){
 					matr9[i][j] = 0.0;
 				}
 			}
 
 			for (int ii = 1; ii < 3; ii++){
 				for (int jj = 1; jj < 3; jj++){
-					for (int i = 0; i < 3; i++){
-						for (int j = 0; j < 3; j++){
+					for (int i = 0; i < FUNC_COUNT; i++){
+						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = -Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell, x1);
 						}
 					}
-					addMatr3ToMatr9(matr9, matr, ii, jj);
+					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 				}
 			}
 
@@ -840,20 +863,20 @@ void calcMatrFlux() {
 			S->addMatrElement(iCell, iCell, matr9);
 
 
-			for (int i = 0; i < 9; i++) {
-				for (int j = 0; j < 9; j++) {
+			for (int i = 0; i < MATR_BLOCK; i++) {
+				for (int j = 0; j < MATR_BLOCK; j++) {
 					matr9[i][j] = 0.0;
 				}
 			}
 
 			for (int ii = 0; ii < 3; ii++){
 				for (int jj = 0; jj < 3; jj++){
-					for (int i = 0; i < 3; i++){
-						for (int j = 0; j < 3; j++){
+					for (int i = 0; i < FUNC_COUNT; i++){
+						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = -Ap[ii][jj] * getF(i, iCell, x1)*getF(j, iCell - 1, x1);
 						}
 					}
-					addMatr3ToMatr9(matr9, matr, ii, jj);
+					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
 				}
 			}
 			S->addMatrElement(iCell, iCell - 1, matr9);
@@ -879,7 +902,7 @@ void calcRHS() {
 			alpha, fRO, fRU, fRE;
 	double *vect = new double[9];
 	for (int iCell = 0; iCell < N; iCell++) {
-		memset(vect, 0, 9*sizeof(double));
+		memset(vect, 0, MATR_BLOCK*sizeof(double));
 		for (int k = 0; k < 2; k++) {
 			double x = cellGP[iCell][k];
 			double w = cellGW[iCell][k];
@@ -890,15 +913,22 @@ void calcRHS() {
 			fRO = ri*ui;
 			fRU = ri*ui*ui + pi;
 			fRE = (pi/AGAM+ri*ui*ui*0.5 +pi)*ui;
-			vect[0] += w*fRO*getDF(0, iCell, x); 
-			vect[1] += w*fRO*getDF(1, iCell, x); 
-			vect[2] += w*fRO*getDF(2, iCell, x); 
-			vect[3] += w*fRU*getDF(0, iCell, x); 
-			vect[4] += w*fRU*getDF(1, iCell, x); 
-			vect[5] += w*fRU*getDF(2, iCell, x); 
-			vect[6] += w*fRE*getDF(0, iCell, x); 
-			vect[7] += w*fRE*getDF(1, iCell, x); 
-			vect[8] += w*fRE*getDF(2, iCell, x); 
+			int shift = 0;
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] += w*fRO*getDF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] += w*fRU*getDF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] += w*fRE*getDF(j, iCell, x);
+			//vect[0] += w*fRO*getDF(0, iCell, x);
+			//vect[1] += w*fRO*getDF(1, iCell, x); 
+			//vect[2] += w*fRO*getDF(2, iCell, x); 
+			//vect[3] += w*fRU*getDF(0, iCell, x); 
+			//vect[4] += w*fRU*getDF(1, iCell, x); 
+			//vect[5] += w*fRU*getDF(2, iCell, x); 
+			//vect[6] += w*fRE*getDF(0, iCell, x); 
+			//vect[7] += w*fRE*getDF(1, iCell, x); 
+			//vect[8] += w*fRE*getDF(2, iCell, x); 
 		}
 		S->addRightElement(iCell, vect);
 	}
@@ -915,15 +945,22 @@ void calcRHS() {
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
 			FLUX_RHS(fRO, fRU, fRE,		rb, pb, ub,		re, pe, ue, GAM);
-			vect[0] = -fRO*getF(0, iCell, x);
-			vect[1] = -fRO*getF(1, iCell, x);
-			vect[2] = -fRO*getF(2, iCell, x);
-			vect[3] = -fRU*getF(0, iCell, x);
-			vect[4] = -fRU*getF(1, iCell, x);
-			vect[5] = -fRU*getF(2, iCell, x);
-			vect[6] = -fRE*getF(0, iCell, x);
-			vect[7] = -fRE*getF(1, iCell, x);
-			vect[8] = -fRE*getF(2, iCell, x);
+			int shift = 0;
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = -fRO*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = -fRU*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = -fRE*getF(j, iCell, x);
+			//vect[0] = -fRO*getF(0, iCell, x);
+			//vect[1] = -fRO*getF(1, iCell, x);
+			//vect[2] = -fRO*getF(2, iCell, x);
+			//vect[3] = -fRU*getF(0, iCell, x);
+			//vect[4] = -fRU*getF(1, iCell, x);
+			//vect[5] = -fRU*getF(2, iCell, x);
+			//vect[6] = -fRE*getF(0, iCell, x);
+			//vect[7] = -fRE*getF(1, iCell, x);
+			//vect[8] = -fRE*getF(2, iCell, x);
 			S->addRightElement(iCell, vect);
 		}
 		{ // iCell-1/2
@@ -937,15 +974,22 @@ void calcRHS() {
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
 			FLUX_RHS(fRO, fRU, fRE, rb, pb, ub, re, pe, ue, GAM);
-			vect[0] = fRO*getF(0, iCell, x);
-			vect[1] = fRO*getF(1, iCell, x);
-			vect[2] = fRO*getF(2, iCell, x);
-			vect[3] = fRU*getF(0, iCell, x);
-			vect[4] = fRU*getF(1, iCell, x);
-			vect[5] = fRU*getF(2, iCell, x);
-			vect[6] = fRE*getF(0, iCell, x);
-			vect[7] = fRE*getF(1, iCell, x);
-			vect[8] = fRE*getF(2, iCell, x);
+			int shift = 0;
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = fRO*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = fRU*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = fRE*getF(j, iCell, x);
+			//vect[0] = fRO*getF(0, iCell, x);
+			//vect[1] = fRO*getF(1, iCell, x);
+			//vect[2] = fRO*getF(2, iCell, x);
+			//vect[3] = fRU*getF(0, iCell, x);
+			//vect[4] = fRU*getF(1, iCell, x);
+			//vect[5] = fRU*getF(2, iCell, x);
+			//vect[6] = fRE*getF(0, iCell, x);
+			//vect[7] = fRE*getF(1, iCell, x);
+			//vect[8] = fRE*getF(2, iCell, x);
 			S->addRightElement(iCell, vect);
 		}
 	}
@@ -963,15 +1007,22 @@ void calcRHS() {
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
 			FLUX_RHS(fRO, fRU, fRE, rb, pb, ub, re, pe, ue, GAM);
-			vect[0] = -fRO*getF(0, iCell, x);
-			vect[1] = -fRO*getF(1, iCell, x);
-			vect[2] = -fRO*getF(2, iCell, x);
-			vect[3] = -fRU*getF(0, iCell, x);
-			vect[4] = -fRU*getF(1, iCell, x);
-			vect[5] = -fRU*getF(2, iCell, x);
-			vect[6] = -fRE*getF(0, iCell, x);
-			vect[7] = -fRE*getF(1, iCell, x);
-			vect[8] = -fRE*getF(2, iCell, x);
+			int shift = 0;
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = -fRO*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = -fRU*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = -fRE*getF(j, iCell, x);
+			//vect[0] = -fRO*getF(0, iCell, x);
+			//vect[1] = -fRO*getF(1, iCell, x);
+			//vect[2] = -fRO*getF(2, iCell, x);
+			//vect[3] = -fRU*getF(0, iCell, x);
+			//vect[4] = -fRU*getF(1, iCell, x);
+			//vect[5] = -fRU*getF(2, iCell, x);
+			//vect[6] = -fRE*getF(0, iCell, x);
+			//vect[7] = -fRE*getF(1, iCell, x);
+			//vect[8] = -fRE*getF(2, iCell, x);
 			S->addRightElement(iCell, vect);
 		}
 		{ // iCell-1/2
@@ -986,15 +1037,22 @@ void calcRHS() {
 			consToPrim(re, pe, ue, ROr, RUr, REr);
 			rb = re; pb = pe; ub = ue;
 			FLUX_RHS(fRO, fRU, fRE, rb, pb, ub, re, pe, ue, GAM);
-			vect[0] = fRO*getF(0, iCell, x);
-			vect[1] = fRO*getF(1, iCell, x);
-			vect[2] = fRO*getF(2, iCell, x);
-			vect[3] = fRU*getF(0, iCell, x);
-			vect[4] = fRU*getF(1, iCell, x);
-			vect[5] = fRU*getF(2, iCell, x);
-			vect[6] = fRE*getF(0, iCell, x);
-			vect[7] = fRE*getF(1, iCell, x);
-			vect[8] = fRE*getF(2, iCell, x);
+			int shift = 0;
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = fRO*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = fRU*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = fRE*getF(j, iCell, x);
+			//vect[0] = fRO*getF(0, iCell, x);
+			//vect[1] = fRO*getF(1, iCell, x);
+			//vect[2] = fRO*getF(2, iCell, x);
+			//vect[3] = fRU*getF(0, iCell, x);
+			//vect[4] = fRU*getF(1, iCell, x);
+			//vect[5] = fRU*getF(2, iCell, x);
+			//vect[6] = fRE*getF(0, iCell, x);
+			//vect[7] = fRE*getF(1, iCell, x);
+			//vect[8] = fRE*getF(2, iCell, x);
 			S->addRightElement(iCell, vect);
 		}
 	}
@@ -1013,15 +1071,22 @@ void calcRHS() {
 			//consToPrim(re, pe, ue, ROr, RUr, REr);
 			re = rb; pe = pb; ue = ub;
 			FLUX_RHS(fRO, fRU, fRE, rb, pb, ub, re, pe, ue, GAM);
-			vect[0] = -fRO*getF(0, iCell, x);
-			vect[1] = -fRO*getF(1, iCell, x);
-			vect[2] = -fRO*getF(2, iCell, x);
-			vect[3] = -fRU*getF(0, iCell, x);
-			vect[4] = -fRU*getF(1, iCell, x);
-			vect[5] = -fRU*getF(2, iCell, x);
-			vect[6] = -fRE*getF(0, iCell, x);
-			vect[7] = -fRE*getF(1, iCell, x);
-			vect[8] = -fRE*getF(2, iCell, x);
+			int shift = 0;
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = -fRO*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = -fRU*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = -fRE*getF(j, iCell, x);
+			//vect[0] = -fRO*getF(0, iCell, x);
+			//vect[1] = -fRO*getF(1, iCell, x);
+			//vect[2] = -fRO*getF(2, iCell, x);
+			//vect[3] = -fRU*getF(0, iCell, x);
+			//vect[4] = -fRU*getF(1, iCell, x);
+			//vect[5] = -fRU*getF(2, iCell, x);
+			//vect[6] = -fRE*getF(0, iCell, x);
+			//vect[7] = -fRE*getF(1, iCell, x);
+			//vect[8] = -fRE*getF(2, iCell, x);
 			S->addRightElement(iCell, vect);
 		}
 		{ // iCell-1/2
@@ -1035,15 +1100,22 @@ void calcRHS() {
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
 			FLUX_RHS(fRO, fRU, fRE, rb, pb, ub, re, pe, ue, GAM);
-			vect[0] = fRO*getF(0, iCell, x);
-			vect[1] = fRO*getF(1, iCell, x);
-			vect[2] = fRO*getF(2, iCell, x);
-			vect[3] = fRU*getF(0, iCell, x);
-			vect[4] = fRU*getF(1, iCell, x);
-			vect[5] = fRU*getF(2, iCell, x);
-			vect[6] = fRE*getF(0, iCell, x);
-			vect[7] = fRE*getF(1, iCell, x);
-			vect[8] = fRE*getF(2, iCell, x);
+			int shift = 0;
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = fRO*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = fRU*getF(j, iCell, x);
+			for (int j = 0; j < FUNC_COUNT; j++)
+				vect[shift++] = fRE*getF(j, iCell, x);
+			//vect[0] = fRO*getF(0, iCell, x);
+			//vect[1] = fRO*getF(1, iCell, x);
+			//vect[2] = fRO*getF(2, iCell, x);
+			//vect[3] = fRU*getF(0, iCell, x);
+			//vect[4] = fRU*getF(1, iCell, x);
+			//vect[5] = fRU*getF(2, iCell, x);
+			//vect[6] = fRE*getF(0, iCell, x);
+			//vect[7] = fRE*getF(1, iCell, x);
+			//vect[8] = fRE*getF(2, iCell, x);
 			S->addRightElement(iCell, vect);
 		}
 	}
@@ -1194,10 +1266,10 @@ void calcLimiterCons() {
 void calcLimiterEigenv() {
 	double c2_, u_;
 	for (int i = 0; i < N; i++) {
-		u_ = (ru[i][0] + ru[i][2] / 12.0) / (ro[i][0] + ro[i][2] / 12.0);
-		c2_ = ((re[i][0] + re[i][2] / 12.0) / (ro[i][0] + ro[i][2] / 12.0) - u_*u_*0.5)*GAM*AGAM;
+		u_ = (ru[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ru[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ro[i][2] / 12.0));
+		c2_ = ((re[i][0] + ((FUNC_COUNT < 3) ? 0.0 : re[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ro[i][2] / 12.0)) - u_*u_*0.5)*GAM*AGAM;
 		calcMatrL(c2_, u_, GAM, L);
-		for (int j = 0; j < 3; j++) {
+		for (int j = 0; j < FUNC_COUNT; j++) {
 			ro_[i][j] = L[0][0] * ro[i][j] + L[0][1] * ru[i][j] + L[0][2] * re[i][j];
 			ru_[i][j] = L[1][0] * ro[i][j] + L[1][1] * ru[i][j] + L[1][2] * re[i][j];
 			re_[i][j] = L[2][0] * ro[i][j] + L[2][1] * ru[i][j] + L[2][2] * re[i][j];
@@ -1209,74 +1281,74 @@ void calcLimiterEigenv() {
 		int iCell = 0;
 		// проецируем на линейный базис
 		double u0, u1, u1l;
-		u0 = ro_[iCell][0] + ro_[iCell][2] / 12.0;
+		u0 = ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
 		u1 = ro_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ro_[iCell + 1][0] + ro_[iCell + 1][2] / 12.0 - u0),
-			LIM_ALPHA*(u0 - ro_[iCell][0] - ro_[iCell][2] / 12.0));
+			LIM_ALPHA*(ro_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ro_[iCell][0] - ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0)));
 		if (u1l != u1) {
 			ro_[iCell][0] = u0;
 			ro_[iCell][1] = u1l;
-			ro_[iCell][2] = 0.0;
+			if (FUNC_COUNT > 2) ro_[iCell][2] = 0.0;
 		}
 
-		u0 = ru_[iCell][0] + ru_[iCell][2] / 12.0;
+		u0 = ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0);
 		u1 = ru_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ru_[iCell + 1][0] + ru_[iCell + 1][2] / 12.0 - u0),
-			LIM_ALPHA*(u0 - ru_[iCell][0] - ru_[iCell][2] / 12.0));
+			LIM_ALPHA*(ru_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ru_[iCell][0] - ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0)));
 		if (u1l != u1) {
 			ru_[iCell][0] = u0;
 			ru_[iCell][1] = u1l;
-			ru_[iCell][2] = 0.0;
+			if (FUNC_COUNT > 2) ru_[iCell][2] = 0.0;
 		}
 
-		u0 = re_[iCell][0] + re_[iCell][2] / 12.0;
+		u0 = re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0);
 		u1 = re_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(re_[iCell + 1][0] + re_[iCell + 1][2] / 12.0 - u0),
-			LIM_ALPHA*(u0 - re_[iCell][0] - re_[iCell][2] / 12.0));
+			LIM_ALPHA*(re_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - re_[iCell][0] - ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0)));
 		if (u1l != u1) {
 			re_[iCell][0] = u0;
 			re_[iCell][1] = u1l;
-			re_[iCell][2] = 0.0;
+			if (FUNC_COUNT > 2) re_[iCell][2] = 0.0;
 		}
 
 	}
 	for (int iCell = 1; iCell < N - 1; iCell++) {
 		// проецируем на линейный базис
 		double u0, u1, u1l;
-		u0 = ro_[iCell][0] + ro_[iCell][2] / 12.0;
+		u0 = ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
 		u1 = ro_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ro_[iCell + 1][0] + ro_[iCell + 1][2] / 12.0 - u0),
-			LIM_ALPHA*(u0 - ro_[iCell - 1][0] - ro_[iCell - 1][2] / 12.0));
+			LIM_ALPHA*(ro_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ro_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell - 1][2] / 12.0)));
 		if (u1l != u1) {
 			ro_[iCell][0] = u0;
 			ro_[iCell][1] = u1l;
-			ro_[iCell][2] = 0.0;
+			if (FUNC_COUNT > 2) ro_[iCell][2] = 0.0;
 		}
 
-		u0 = ru_[iCell][0] + ru_[iCell][2] / 12.0;
+		u0 = ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0);
 		u1 = ru_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ru_[iCell + 1][0] + ru_[iCell + 1][2] / 12.0 - u0),
-			LIM_ALPHA*(u0 - ru_[iCell - 1][0] - ru_[iCell - 1][2] / 12.0));
+			LIM_ALPHA*(ru_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ru_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell - 1][2] / 12.0)));
 		if (u1l != u1) {
 			ru_[iCell][0] = u0;
 			ru_[iCell][1] = u1l;
-			ru_[iCell][2] = 0.0;
+			if (FUNC_COUNT > 2) ru_[iCell][2] = 0.0;
 		}
 
-		u0 = re_[iCell][0] + re_[iCell][2] / 12.0;
+		u0 = re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0);
 		u1 = re_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(re_[iCell + 1][0] + re_[iCell + 1][2] / 12.0 - u0),
-			LIM_ALPHA*(u0 - re_[iCell - 1][0] - re_[iCell - 1][2] / 12.0));
+			LIM_ALPHA*(re_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - re_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : re_[iCell - 1][2] / 12.0)));
 		if (u1l != u1) {
 			re_[iCell][0] = u0;
 			re_[iCell][1] = u1l;
-			re_[iCell][2] = 0.0;
+			if (FUNC_COUNT > 2) re_[iCell][2] = 0.0;
 		}
 
 	}
@@ -1284,46 +1356,46 @@ void calcLimiterEigenv() {
 		int iCell = N - 1;
 		// проецируем на линейный базис
 		double u0, u1, u1l;
-		u0 = ro_[iCell][0] + ro_[iCell][2] / 12.0;
+		u0 = ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
 		u1 = ro_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ro_[iCell][0] + ro_[iCell][2] / 12.0 - u0),
-			LIM_ALPHA*(u0 - ro_[iCell - 1][0] - ro_[iCell - 1][2] / 12.0));
+			LIM_ALPHA*(ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ro_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell - 1][2] / 12.0)));
 		if (u1l != u1) {
 			ro_[iCell][0] = u0;
 			ro_[iCell][1] = u1l;
-			ro_[iCell][2] = 0.0;
+			if (FUNC_COUNT > 2) ro_[iCell][2] = 0.0;
 		}
 
-		u0 = ru_[iCell][0] + ru_[iCell][2] / 12.0;
+		u0 = ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0);
 		u1 = ru_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ru_[iCell][0] + ru_[iCell][2] / 12.0 - u0),
-			LIM_ALPHA*(u0 - ru_[iCell - 1][0] - ru_[iCell - 1][2] / 12.0));
+			LIM_ALPHA*(ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ru_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell - 1][2] / 12.0)));
 		if (u1l != u1) {
 			ru_[iCell][0] = u0;
 			ru_[iCell][1] = u1l;
-			ru_[iCell][2] = 0.0;
+			if (FUNC_COUNT > 2) ru_[iCell][2] = 0.0;
 		}
 
-		u0 = re_[iCell][0] + re_[iCell][2] / 12.0;
+		u0 = re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0);
 		u1 = re_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(re_[iCell][0] + re_[iCell][2] / 12.0 - u0),
-			LIM_ALPHA*(u0 - re_[iCell - 1][0] - re_[iCell - 1][2] / 12.0));
+			LIM_ALPHA*(re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - re_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : (re_[iCell - 1][2] / 12.0))));
 		if (u1l != u1) {
 			re_[iCell][0] = u0;
 			re_[iCell][1] = u1l;
-			re_[iCell][2] = 0.0;
+			if (FUNC_COUNT > 2) re_[iCell][2] = 0.0;
 		}
 
 	}
 
 	for (int i = 0; i < N; i++) {
-		u_ = (ru[i][0] + ru[i][2] / 12.0) / (ro[i][0] + ro[i][2] / 12.0);
-		c2_ = ((re[i][0] + re[i][2] / 12.0) / (ro[i][0] + ro[i][2] / 12.0) - u_*u_*0.5)*GAM*AGAM;
+		u_ = (ru[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ru[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : (ro[i][2] / 12.0)));
+		c2_ = ((re[i][0] + ((FUNC_COUNT < 3) ? 0.0 : re[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : (ro[i][2] / 12.0))) - u_*u_*0.5)*GAM*AGAM;
 		calcMatrR(c2_, u_, GAM, R);
-		for (int j = 0; j < 3; j++) {
+		for (int j = 0; j < FUNC_COUNT; j++) {
 			ro[i][j] = R[0][0] * ro_[i][j] + R[0][1] * ru_[i][j] + R[0][2] * re_[i][j];
 			ru[i][j] = R[1][0] * ro_[i][j] + R[1][1] * ru_[i][j] + R[1][2] * re_[i][j];
 			re[i][j] = R[2][0] * ro_[i][j] + R[2][1] * ru_[i][j] + R[2][2] * re_[i][j];
@@ -1348,13 +1420,13 @@ void calcLimiter_II() {
 			if ((r < EPS) || (p < EPS)) {
 				ro[i][0] += ro[i][2] / 12.0;
 				ro[i][1] = 0.0;
-				ro[i][2] = 0.0;
+				if (FUNC_COUNT > 2) ro[i][2] = 0.0;
 				ru[i][0] += ru[i][2] / 12.0;
 				ru[i][1] = 0.0;
-				ru[i][2] = 0.0;
+				if (FUNC_COUNT > 2) ru[i][2] = 0.0;
 				re[i][0] += re[i][2] / 12.0;
 				re[i][1] = 0.0;
-				re[i][2] = 0.0;
+				if (FUNC_COUNT > 2) re[i][2] = 0.0;
 				printf("WARNING: bad cell #%d\n", i);
 				break;
 			}
@@ -1541,13 +1613,13 @@ double getField(int i, int iCell, double x){
 	double f2 = getF(2, iCell, x);
 	switch (i) {
 	case 0:
-		return ro[iCell][0] + ro[iCell][1] * f1 + ro[iCell][2] * f2;
+		return ro[iCell][0] + ro[iCell][1] * f1 + ((FUNC_COUNT < 3) ? 0.0 : ro[iCell][2] * f2);
 		break;
 	case 1:
-		return ru[iCell][0] + ru[iCell][1] * f1 + ru[iCell][2] * f2;
+		return ru[iCell][0] + ru[iCell][1] * f1 +( (FUNC_COUNT < 3) ? 0.0 : ru[iCell][2] * f2);
 		break;
 	case 2:
-		return re[iCell][0] + re[iCell][1] * f1 + re[iCell][2] * f2;
+		return re[iCell][0] + re[iCell][1] * f1 + ((FUNC_COUNT < 3) ? 0.0 : re[iCell][2] * f2);
 		break;
 	}
 }

@@ -12,8 +12,9 @@ public:
 	CSRMatrix* a;
 	double* b;
 	double* x;
+	int blockSize;
 	virtual void solve(double eps, int& maxIter) = 0;
-	void init(int cellsCount);
+	void init(int cellsCount, int bSize);
 	void zero();
 	void setMatrElement(int i, int j, double** matr3);
 	void setRightElement(int i, double* vect3);

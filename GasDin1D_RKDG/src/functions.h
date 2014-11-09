@@ -18,7 +18,7 @@ void flux_rim(double &fr, double &fu, double &fe,
 	double rb, double pb, double ub, double re, double pe, double ue, double GAM);
 
 
-extern void addMatr3ToMatr9(double **m9, double **m3, int i, int j);
+extern void addMatr3ToMatr9(double **m9, double **m3, int i, int j, int m3size);
 extern void URS(int iCase, double& r, double& p, double& e, double gam);
 extern double _max_(double a, double b);
 

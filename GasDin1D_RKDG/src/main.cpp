@@ -8,21 +8,21 @@
 const int		FUNC_COUNT = 3;
 const int		MATR_BLOCK = 3 * FUNC_COUNT;
 
-const double	CFL		= 2.5e-3;
+const double	CFL		= 1.e-2;
 
-const double	LIM_ALPHA = 2.0;
+const double	LIM_ALPHA = 1.5;
 
-const int		N		= 100;
+const int		N		= 50;
 const double	XMIN	= -1.0; 
 const double	XMAX	=  1.0;
 const double	EPS		= 1.0e-5;
-const double	GAM		= 1.4;
+const double	GAM		= 5.0/3.0;
 const double	AGAM	= GAM-1.0;
-const double	TMAX	= 0.2;
+const double	TMAX	= 0.07;
 
 const int		MAX_ITER	= 5000;
-const int		SAVE_STEP	= 100;
-const int		PRINT_STEP	= 1;
+const int		SAVE_STEP	= 50;
+const int		PRINT_STEP	= 10;
 
 double **ro, **ru, **re;
 double **ro_, **ru_, **re_;
@@ -106,7 +106,7 @@ int main(int argc, char** argv)
 		if (USE_LIMITER_II) LIMITER_II();
 		if (USE_SMOOTHER)   calcSmoother();
 
-		for (int iCell = 0, ind = 0; iCell < N; iCell++, ind += 9) {
+		for (int iCell = 0; iCell < N; iCell++) {
 			consToPrim(r[iCell], p[iCell], u[iCell], ro[iCell][0], ru[iCell][0], re[iCell][0]);
 		}
 
@@ -118,7 +118,7 @@ int main(int argc, char** argv)
 			char str[50];
 			sprintf(str, "res_%010d.csv", step);
 			FILE * fp = fopen(str, "w");
-			fprintf(fp, "x,r,p,u\n");
+			//fprintf(fp, "x,r,p,u\n");
 			for (int i = 0; i < N; i++) {
 				fprintf(fp, "%25.15e, %25.15e, %25.15e, %25.15e\n", XMIN+h*i, r[i], p[i], u[i]);
 			}
@@ -291,15 +291,15 @@ void init() {
 	for (int i = 0; i < N; i++) {
 		double x = cellC[i];
 		// Sod  !!! XMIN = -1.0; XMAX = 1.0;
-		if (x < 0.0) {
-			r[i] = 1.0;
-			p[i] = 1.0;
-			u[i] = 0.0;
-		} else {
-			r[i] = 0.125;
-			p[i] = 0.1;
-			u[i] = 0.0;
-		}
+		//if (x < 0.0) {
+		//	r[i] = 1.0;
+		//	p[i] = 1.0;
+		//	u[i] = 0.0;
+		//} else {
+		//	r[i] = 0.125;
+		//	p[i] = 0.1;
+		//	u[i] = 0.0;
+		//}
 		// Lax  !!! XMIN = -1.0; XMAX = 1.0;
 		//if (x < 0.0) {
 		//	r[i] = 0.445;
@@ -330,6 +330,18 @@ void init() {
 		//r[i] = 0.125;
 		//p[i] = 0.1;
 		//u[i] = 1.0;
+		
+		// Simple wave
+		const double L = 0.2;
+		if (fabs(x) < L) {
+			r[i] = 1.0 + exp(2.0 - 2.0*((L*L) / ((L*L) - (x*x))));
+		}
+		else {
+			r[i] = 1.0;
+		}
+		double e = ::pow(r[i], AGAM);
+		u[i] = -2.0*sqrt(e*AGAM*GAM)/AGAM;
+		p[i] = r[i]*e*AGAM;
 
 		primToCons(r[i], p[i], u[i], ro[i][0], ru[i][0], re[i][0]);
 		for (int j = 1; j < FUNC_COUNT; j++) {
@@ -1263,11 +1275,18 @@ void calcLimiterCons() {
 	}
 }
 
+inline double avg(double *fld)
+{
+	double avg = fld[0];
+	if (FUNC_COUNT == 3) avg += fld[2]/12.0;
+	return avg;
+}
+
 void calcLimiterEigenv() {
 	double c2_, u_;
 	for (int i = 0; i < N; i++) {
-		u_ = (ru[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ru[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ro[i][2] / 12.0));
-		c2_ = ((re[i][0] + ((FUNC_COUNT < 3) ? 0.0 : re[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ro[i][2] / 12.0)) - u_*u_*0.5)*GAM*AGAM;
+		u_ = avg(ru[i])/avg(ro[i]);
+		c2_ = (avg(re[i]) / avg(ro[i]) - u_*u_*0.5)*GAM*AGAM;
 		calcMatrL(c2_, u_, GAM, L);
 		for (int j = 0; j < FUNC_COUNT; j++) {
 			ro_[i][j] = L[0][0] * ro[i][j] + L[0][1] * ru[i][j] + L[0][2] * re[i][j];
@@ -1281,33 +1300,33 @@ void calcLimiterEigenv() {
 		int iCell = 0;
 		// проецируем на линейный базис
 		double u0, u1, u1l;
-		u0 = ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
+		u0 = avg(ro_[iCell]);//ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
 		u1 = ro_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ro_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell + 1][2] / 12.0) - u0),
-			LIM_ALPHA*(u0 - ro_[iCell][0] - ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0)));
+			LIM_ALPHA*(avg(ro_[iCell + 1]) - u0),
+			LIM_ALPHA*(u0 - avg(ro_[iCell])));
 		if (u1l != u1) {
 			ro_[iCell][0] = u0;
 			ro_[iCell][1] = u1l;
 			if (FUNC_COUNT > 2) ro_[iCell][2] = 0.0;
 		}
 
-		u0 = ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0);
+		u0 = avg(ru_[iCell]);
 		u1 = ru_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ru_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell + 1][2] / 12.0) - u0),
-			LIM_ALPHA*(u0 - ru_[iCell][0] - ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0)));
+			LIM_ALPHA*(avg(ru_[iCell + 1]) - u0),
+			LIM_ALPHA*(u0 - avg(ru_[iCell])));
 		if (u1l != u1) {
 			ru_[iCell][0] = u0;
 			ru_[iCell][1] = u1l;
 			if (FUNC_COUNT > 2) ru_[iCell][2] = 0.0;
 		}
 
-		u0 = re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0);
+		u0 = avg(re_[iCell]);
 		u1 = re_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(re_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell + 1][2] / 12.0) - u0),
-			LIM_ALPHA*(u0 - re_[iCell][0] - ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0)));
+			LIM_ALPHA*(avg(re_[iCell + 1]) - u0),
+			LIM_ALPHA*(u0 - avg(re_[iCell])));
 		if (u1l != u1) {
 			re_[iCell][0] = u0;
 			re_[iCell][1] = u1l;
@@ -1318,33 +1337,33 @@ void calcLimiterEigenv() {
 	for (int iCell = 1; iCell < N - 1; iCell++) {
 		// проецируем на линейный базис
 		double u0, u1, u1l;
-		u0 = ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
+		u0 = avg(ro_[iCell]);
 		u1 = ro_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ro_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell + 1][2] / 12.0) - u0),
-			LIM_ALPHA*(u0 - ro_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell - 1][2] / 12.0)));
+			LIM_ALPHA*(avg(ro_[iCell + 1]) - u0),
+			LIM_ALPHA*(u0 - avg(ro_[iCell - 1])));
 		if (u1l != u1) {
 			ro_[iCell][0] = u0;
 			ro_[iCell][1] = u1l;
 			if (FUNC_COUNT > 2) ro_[iCell][2] = 0.0;
 		}
 
-		u0 = ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0);
+		u0 = avg(ru_[iCell]);
 		u1 = ru_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ru_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell + 1][2] / 12.0) - u0),
-			LIM_ALPHA*(u0 - ru_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell - 1][2] / 12.0)));
+			LIM_ALPHA*(avg(ru_[iCell + 1]) - u0),
+			LIM_ALPHA*(u0 - avg(ru_[iCell - 1])));
 		if (u1l != u1) {
 			ru_[iCell][0] = u0;
 			ru_[iCell][1] = u1l;
 			if (FUNC_COUNT > 2) ru_[iCell][2] = 0.0;
 		}
 
-		u0 = re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0);
+		u0 = avg(re_[iCell]);
 		u1 = re_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(re_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell + 1][2] / 12.0) - u0),
-			LIM_ALPHA*(u0 - re_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : re_[iCell - 1][2] / 12.0)));
+			LIM_ALPHA*(avg(re_[iCell + 1]) - u0),
+			LIM_ALPHA*(u0 - avg(re_[iCell - 1])));
 		if (u1l != u1) {
 			re_[iCell][0] = u0;
 			re_[iCell][1] = u1l;
@@ -1356,33 +1375,33 @@ void calcLimiterEigenv() {
 		int iCell = N - 1;
 		// проецируем на линейный базис
 		double u0, u1, u1l;
-		u0 = ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
+		u0 = avg(ro_[iCell]);
 		u1 = ro_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0) - u0),
-			LIM_ALPHA*(u0 - ro_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell - 1][2] / 12.0)));
+			LIM_ALPHA*(avg(ro_[iCell]) - u0),
+			LIM_ALPHA*(u0 - avg(ro_[iCell - 1])));
 		if (u1l != u1) {
 			ro_[iCell][0] = u0;
 			ro_[iCell][1] = u1l;
 			if (FUNC_COUNT > 2) ro_[iCell][2] = 0.0;
 		}
 
-		u0 = ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0);
+		u0 = avg(ru_[iCell]);
 		u1 = ru_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0) - u0),
-			LIM_ALPHA*(u0 - ru_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell - 1][2] / 12.0)));
+			LIM_ALPHA*(avg(ru_[iCell]) - u0),
+			LIM_ALPHA*(u0 - avg(ru_[iCell - 1])));
 		if (u1l != u1) {
 			ru_[iCell][0] = u0;
 			ru_[iCell][1] = u1l;
 			if (FUNC_COUNT > 2) ru_[iCell][2] = 0.0;
 		}
 
-		u0 = re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0);
+		u0 = avg(re_[iCell]);
 		u1 = re_[iCell][1];
 		u1l = minmod(u1,
-			LIM_ALPHA*(re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0) - u0),
-			LIM_ALPHA*(u0 - re_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : (re_[iCell - 1][2] / 12.0))));
+			LIM_ALPHA*(avg(re_[iCell]) - u0),
+			LIM_ALPHA*(u0 - avg(re_[iCell - 1])));
 		if (u1l != u1) {
 			re_[iCell][0] = u0;
 			re_[iCell][1] = u1l;
@@ -1392,8 +1411,8 @@ void calcLimiterEigenv() {
 	}
 
 	for (int i = 0; i < N; i++) {
-		u_ = (ru[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ru[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : (ro[i][2] / 12.0)));
-		c2_ = ((re[i][0] + ((FUNC_COUNT < 3) ? 0.0 : re[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : (ro[i][2] / 12.0))) - u_*u_*0.5)*GAM*AGAM;
+		u_ = avg(ru[i]) / avg(ro[i]);
+		c2_ = (avg(re[i]) / avg(ro[i]) - u_*u_*0.5)*GAM*AGAM;
 		calcMatrR(c2_, u_, GAM, R);
 		for (int j = 0; j < FUNC_COUNT; j++) {
 			ro[i][j] = R[0][0] * ro_[i][j] + R[0][1] * ru_[i][j] + R[0][2] * re_[i][j];
@@ -1440,9 +1459,9 @@ void calcLimiter_II() {
 void calcSmoother() {
 	//копируем старые значения
 	for (int i = 0; i < N; i++) {
-		memcpy(ro_[i], ro[i], 3 * sizeof(double));
-		memcpy(ru_[i], ru[i], 3 * sizeof(double));
-		memcpy(re_[i], re[i], 3 * sizeof(double));
+		memcpy(ro_[i], ro[i], FUNC_COUNT * sizeof(double));
+		memcpy(ru_[i], ru[i], FUNC_COUNT * sizeof(double));
+		memcpy(re_[i], re[i], FUNC_COUNT * sizeof(double));
 	}
 	for (int idField = 0; idField < 3; idField++) {
 		double** fld, **fldOld;
@@ -1533,9 +1552,9 @@ void calcSmoother() {
 	}
 
 	for (int i = 0; i < N; i++) {
-		memcpy(ro[i], ro_[i], 3 * sizeof(double));
-		memcpy(ru[i], ru_[i], 3 * sizeof(double));
-		memcpy(re[i], re_[i], 3 * sizeof(double));
+		memcpy(ro[i], ro_[i], FUNC_COUNT * sizeof(double));
+		memcpy(ru[i], ru_[i], FUNC_COUNT * sizeof(double));
+		memcpy(re[i], re_[i], FUNC_COUNT * sizeof(double));
 	}
 
 }
@@ -1613,13 +1632,13 @@ double getField(int i, int iCell, double x){
 	double f2 = getF(2, iCell, x);
 	switch (i) {
 	case 0:
-		return ro[iCell][0] + ro[iCell][1] * f1 + ((FUNC_COUNT < 3) ? 0.0 : ro[iCell][2] * f2);
+		return ro[iCell][0] + ro[iCell][1] * f1 + ((FUNC_COUNT < 3) ? 0.0 : ro[iCell][2]) * f2;
 		break;
 	case 1:
-		return ru[iCell][0] + ru[iCell][1] * f1 +( (FUNC_COUNT < 3) ? 0.0 : ru[iCell][2] * f2);
+		return ru[iCell][0] + ru[iCell][1] * f1 + ((FUNC_COUNT < 3) ? 0.0 : ru[iCell][2]) * f2;
 		break;
 	case 2:
-		return re[iCell][0] + re[iCell][1] * f1 + ((FUNC_COUNT < 3) ? 0.0 : re[iCell][2] * f2);
+		return re[iCell][0] + re[iCell][1] * f1 + ((FUNC_COUNT < 3) ? 0.0 : re[iCell][2]) * f2;
 		break;
 	}
 }

@@ -921,7 +921,7 @@ void calcRHS() {
 			fRO = getField(0, iCell, x);
 			fRU = getField(1, iCell, x);
 			fRE = getField(2, iCell, x);
-			consToPrim(ri, pi, ui, fRO, fRU, fRO);
+			consToPrim(ri, pi, ui, fRO, fRU, fRE);
 			fRO = ri*ui;
 			fRU = ri*ui*ui + pi;
 			fRE = (pi/AGAM+ri*ui*ui*0.5 +pi)*ui;

@@ -1,28 +1,30 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
-#include "Solver.h"
+#include <ctime>
+#include "MatrixSolver.h"
 #include "functions.h"
 #include <float.h>
+#include "global.h"
 
 const int		FUNC_COUNT = 3;
 const int		MATR_BLOCK = 3 * FUNC_COUNT;
 
-const double	CFL		= 1.e-2;
+const double	CFL		= 1.e-3;
 
-const double	LIM_ALPHA = 1.5;
+const double	LIM_ALPHA = 1.0;
 
 const int		N		= 50;
 const double	XMIN	= -1.0; 
 const double	XMAX	=  1.0;
-const double	EPS		= 1.0e-5;
+const double	EPS		= 1.0e-3;
 const double	GAM		= 5.0/3.0;
 const double	AGAM	= GAM-1.0;
 const double	TMAX	= 0.07;
 
-const int		MAX_ITER	= 5000;
-const int		SAVE_STEP	= 50;
-const int		PRINT_STEP	= 10;
+const int		MAX_ITER	= 55000;
+const int		SAVE_STEP	= 1000;
+const int		PRINT_STEP	= 1;
 
 double **ro, **ru, **re;
 double **ro_, **ru_, **re_;
@@ -47,7 +49,7 @@ const bool USE_LIMITER_I	= true;
 const bool USE_LIMITER_II	= false;
 const bool USE_SMOOTHER		= false;
 
-Solver *S;
+MatrixSolver *S;
 
 /*  базисные функции и поля  */
 double getField(int i, int iCell, double x);
@@ -75,6 +77,7 @@ int main(int argc, char** argv)
 #ifdef _DEBUG
 	_controlfp(~(_MCW_EM & (~_EM_INEXACT) & (~_EM_UNDERFLOW)), _MCW_EM);
 #endif
+	MPI_Init(&argc, &argv);
 	init();
 	double t = 0.0;
 	int step = 0;
@@ -82,6 +85,7 @@ int main(int argc, char** argv)
 		t += tau;
 		step++;
 		S->zero();
+		S->setParameter("PRINT_LEVEL",2);
 		
 		calcIntegral();			// вычисляем интеграл от(dF / dU)*deltaU*dFi / dx
 		calcMatrWithTau();		// вычисляем матрицы перед производной по времени
@@ -100,6 +104,10 @@ int main(int argc, char** argv)
 				ru[iCell][j] += S->x[ind + (shift++)];
 			for (int j = 0; j < FUNC_COUNT; j++)
 				re[iCell][j] += S->x[ind + (shift++)];
+		}
+
+		for (int iCell = 0; iCell < N; iCell++) {
+			consToPrim(r[iCell], p[iCell], u[iCell], ro[iCell][0], ru[iCell][0], re[iCell][0]);
 		}
 
 		if (USE_LIMITER_I)  LIMITER_I();
@@ -123,10 +131,13 @@ int main(int argc, char** argv)
 				fprintf(fp, "%25.15e, %25.15e, %25.15e, %25.15e\n", XMIN+h*i, r[i], p[i], u[i]);
 			}
 			fclose(fp);
-			printf("           | File '%s' is written...\n", str);
+			log("           | File '%s' is written...\n", str);
 		}
 	}
 
+
+	fclose(hLog);
+	MPI_Finalize();
 	return 0;
 }
 
@@ -271,6 +282,14 @@ void calcMassMatr() {
 
 
 void init() {
+	char *logName = new char[128];
+	time_t t = time(0);   // get time now
+	struct tm * now = localtime(&t);
+	sprintf(logName, "%4d-%02d-%02d_%02d.%02d.%02d", now->tm_year + 1900, now->tm_mon + 1, now->tm_mday, now->tm_hour, now->tm_min, now->tm_sec);
+	logName = strcat(logName, ".log");
+
+	hLog = fopen(logName, "w");
+
 	memAlloc();
 	
 	// узлы квадратур Гаусса и центры ячеек
@@ -286,7 +305,7 @@ void init() {
 		cellC[i] = 0.50*(x1 + x2);
 	}
 
-	S = SolverFactory::create(SOLVER_TYPE_ZEIDEL);
+	S = MatrixSolver::create("HYPRE_GMRES");
 	S->init(N, MATR_BLOCK);
 	for (int i = 0; i < N; i++) {
 		double x = cellC[i];
@@ -912,7 +931,7 @@ void calcRHS() {
 			rb, pb, ub, vb=0.0, wb=0.0,
 			re, pe, ue, ve=0.0, we=0.0,
 			alpha, fRO, fRU, fRE;
-	double *vect = new double[9];
+	double *vect = new double[MATR_BLOCK];
 	for (int iCell = 0; iCell < N; iCell++) {
 		memset(vect, 0, MATR_BLOCK*sizeof(double));
 		for (int k = 0; k < 2; k++) {
@@ -921,7 +940,7 @@ void calcRHS() {
 			fRO = getField(0, iCell, x);
 			fRU = getField(1, iCell, x);
 			fRE = getField(2, iCell, x);
-			consToPrim(ri, pi, ui, fRO, fRU, fRO);
+			consToPrim(ri, pi, ui, fRO, fRU, fRE);
 			fRO = ri*ui;
 			fRU = ri*ui*ui + pi;
 			fRE = (pi/AGAM+ri*ui*ui*0.5 +pi)*ui;
@@ -1300,7 +1319,7 @@ void calcLimiterEigenv() {
 		int iCell = 0;
 		// проецируем на линейный базис
 		double u0, u1, u1l;
-		u0 = avg(ro_[iCell]);//ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
+		u0 = avg(ro_[iCell]);
 		u1 = ro_[iCell][1];
 		u1l = minmod(u1,
 			LIM_ALPHA*(avg(ro_[iCell + 1]) - u0),
@@ -1422,6 +1441,147 @@ void calcLimiterEigenv() {
 	}
 }
 
+/*
+void calcLimiterEigenv() {
+	double c2_, u_;
+	for (int i = 0; i < N; i++) {
+		u_ = (ru[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ru[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ro[i][2] / 12.0));
+		c2_ = ((re[i][0] + ((FUNC_COUNT < 3) ? 0.0 : re[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ro[i][2] / 12.0)) - u_*u_*0.5)*GAM*AGAM;
+		calcMatrL(c2_, u_, GAM, L);
+		for (int j = 0; j < FUNC_COUNT; j++) {
+			ro_[i][j] = L[0][0] * ro[i][j] + L[0][1] * ru[i][j] + L[0][2] * re[i][j];
+			ru_[i][j] = L[1][0] * ro[i][j] + L[1][1] * ru[i][j] + L[1][2] * re[i][j];
+			re_[i][j] = L[2][0] * ro[i][j] + L[2][1] * ru[i][j] + L[2][2] * re[i][j];
+		}
+	}
+
+
+	{
+		int iCell = 0;
+		// проецируем на линейный базис
+		double u0, u1, u1l;
+		u0 = ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
+		u1 = ro_[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ro_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ro_[iCell][0] - ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0)));
+		if (u1l != u1) {
+			ro_[iCell][0] = u0;
+			ro_[iCell][1] = u1l;
+			if (FUNC_COUNT > 2) ro_[iCell][2] = 0.0;
+		}
+
+		u0 = ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0);
+		u1 = ru_[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ru_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ru_[iCell][0] - ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0)));
+		if (u1l != u1) {
+			ru_[iCell][0] = u0;
+			ru_[iCell][1] = u1l;
+			if (FUNC_COUNT > 2) ru_[iCell][2] = 0.0;
+		}
+
+		u0 = re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0);
+		u1 = re_[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(re_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - re_[iCell][0] - ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0)));
+		if (u1l != u1) {
+			re_[iCell][0] = u0;
+			re_[iCell][1] = u1l;
+			if (FUNC_COUNT > 2) re_[iCell][2] = 0.0;
+		}
+
+	}
+	for (int iCell = 1; iCell < N - 1; iCell++) {
+		// проецируем на линейный базис
+		double u0, u1, u1l;
+		u0 = ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
+		u1 = ro_[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ro_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ro_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell - 1][2] / 12.0)));
+		if (u1l != u1) {
+			ro_[iCell][0] = u0;
+			ro_[iCell][1] = u1l;
+			if (FUNC_COUNT > 2) ro_[iCell][2] = 0.0;
+		}
+
+		u0 = ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0);
+		u1 = ru_[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ru_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ru_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell - 1][2] / 12.0)));
+		if (u1l != u1) {
+			ru_[iCell][0] = u0;
+			ru_[iCell][1] = u1l;
+			if (FUNC_COUNT > 2) ru_[iCell][2] = 0.0;
+		}
+
+		u0 = re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0);
+		u1 = re_[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(re_[iCell + 1][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell + 1][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - re_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : re_[iCell - 1][2] / 12.0)));
+		if (u1l != u1) {
+			re_[iCell][0] = u0;
+			re_[iCell][1] = u1l;
+			if (FUNC_COUNT > 2) re_[iCell][2] = 0.0;
+		}
+
+	}
+	{
+		int iCell = N - 1;
+		// проецируем на линейный базис
+		double u0, u1, u1l;
+		u0 = ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0);
+		u1 = ro_[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ro_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ro_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ro_[iCell - 1][2] / 12.0)));
+		if (u1l != u1) {
+			ro_[iCell][0] = u0;
+			ro_[iCell][1] = u1l;
+			if (FUNC_COUNT > 2) ro_[iCell][2] = 0.0;
+		}
+
+		u0 = ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0);
+		u1 = ru_[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(ru_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - ru_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : ru_[iCell - 1][2] / 12.0)));
+		if (u1l != u1) {
+			ru_[iCell][0] = u0;
+			ru_[iCell][1] = u1l;
+			if (FUNC_COUNT > 2) ru_[iCell][2] = 0.0;
+		}
+
+		u0 = re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0);
+		u1 = re_[iCell][1];
+		u1l = minmod(u1,
+			LIM_ALPHA*(re_[iCell][0] + ((FUNC_COUNT < 3) ? 0.0 : re_[iCell][2] / 12.0) - u0),
+			LIM_ALPHA*(u0 - re_[iCell - 1][0] - ((FUNC_COUNT < 3) ? 0.0 : (re_[iCell - 1][2] / 12.0))));
+		if (u1l != u1) {
+			re_[iCell][0] = u0;
+			re_[iCell][1] = u1l;
+			if (FUNC_COUNT > 2) re_[iCell][2] = 0.0;
+		}
+
+	}
+
+	for (int i = 0; i < N; i++) {
+		u_ = (ru[i][0] + ((FUNC_COUNT < 3) ? 0.0 : ru[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : (ro[i][2] / 12.0)));
+		c2_ = ((re[i][0] + ((FUNC_COUNT < 3) ? 0.0 : re[i][2] / 12.0)) / (ro[i][0] + ((FUNC_COUNT < 3) ? 0.0 : (ro[i][2] / 12.0))) - u_*u_*0.5)*GAM*AGAM;
+		calcMatrR(c2_, u_, GAM, R);
+		for (int j = 0; j < FUNC_COUNT; j++) {
+			ro[i][j] = R[0][0] * ro_[i][j] + R[0][1] * ru_[i][j] + R[0][2] * re_[i][j];
+			ru[i][j] = R[1][0] * ro_[i][j] + R[1][1] * ru_[i][j] + R[1][2] * re_[i][j];
+			re[i][j] = R[2][0] * ro_[i][j] + R[2][1] * ru_[i][j] + R[2][2] * re_[i][j];
+		}
+	}
+}
+*/
 void calcLimiter_II() {
 	double x[5];
 	for (int i = 0; i < N; i++) {

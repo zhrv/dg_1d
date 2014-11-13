@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cmath>
+#include "global.h"
 
 double **matr, *vect, **matr1, **matr9, ***matrM;
 double **A, **Ap, **Am, **L, **R, ***mA;

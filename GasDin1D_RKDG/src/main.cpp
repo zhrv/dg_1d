@@ -7,22 +7,22 @@
 #include <float.h>
 #include "global.h"
 
-const int		FUNC_COUNT = 3;
-const int		MATR_BLOCK = 3 * FUNC_COUNT;
+const int		FUNC_COUNT	= 2;
+const int		MATR_BLOCK	= 3 * FUNC_COUNT;
 
-const double	CFL		= 1.e-3;
+const double	CFL			= 1.e-3;
 
-const double	LIM_ALPHA = 1.0;
+const double	LIM_ALPHA	= 1.5;
 
-const int		N		= 50;
+const int		N		= 400;
 const double	XMIN	= -1.0; 
 const double	XMAX	=  1.0;
-const double	EPS		= 1.0e-3;
+const double	EPS		= 1.0e-4;
 const double	GAM		= 5.0/3.0;
 const double	AGAM	= GAM-1.0;
 const double	TMAX	= 0.07;
 
-const int		MAX_ITER	= 55000;
+const int		MAX_ITER	= 5000;
 const int		SAVE_STEP	= 1000;
 const int		PRINT_STEP	= 1;
 
@@ -45,7 +45,7 @@ double tau = CFL*h; // <= 1.e-5
 #define LIMITER_I  calcLimiterEigenv
 #define LIMITER_II calcLimiter_II
 
-const bool USE_LIMITER_I	= true;
+const bool USE_LIMITER_I	= false;
 const bool USE_LIMITER_II	= false;
 const bool USE_SMOOTHER		= false;
 
@@ -85,7 +85,7 @@ int main(int argc, char** argv)
 		t += tau;
 		step++;
 		S->zero();
-		S->setParameter("PRINT_LEVEL",2);
+		//S->setParameter("PRINT_LEVEL",2);
 		
 		calcIntegral();			// вычисляем интеграл от(dF / dU)*deltaU*dFi / dx
 		calcMatrWithTau();		// вычисляем матрицы перед производной по времени
@@ -268,14 +268,23 @@ void memFree() {
 void calcMassMatr() {
 	for (int iCell = 0; iCell < N; iCell++){
 
-		for (int i = 0; i < FUNC_COUNT; i++) {
-			for (int j = 0; j < FUNC_COUNT; j++){
-				matrM[iCell][i][j] = 0.0;
-				for (int iGP = 0; iGP < 2; iGP++) {
-					double x = cellGP[iCell][iGP];
-					matrM[iCell][i][j] = matrM[iCell][i][j] + cellGW[iCell][iGP]*getF(i, iCell, x)*getF(j, iCell, x);
-				}
-			}
+		//for (int i = 0; i < FUNC_COUNT; i++) {
+		//	for (int j = 0; j < FUNC_COUNT; j++){
+		//		matrM[iCell][i][j] = 0.0;
+		//		for (int iGP = 0; iGP < 2; iGP++) {
+		//			double x = cellGP[iCell][iGP];
+		//			matrM[iCell][i][j] = matrM[iCell][i][j] + cellGW[iCell][iGP]*getF(i, iCell, x)*getF(j, iCell, x);
+		//		}
+		//	}
+		//}
+		matrM[iCell][0][0] = h;
+		matrM[iCell][0][1] = matrM[iCell][1][0] = 0.0;
+		matrM[iCell][1][1] = h / 12.0;
+
+		if (FUNC_COUNT == 3) {
+			matrM[iCell][0][2] = matrM[iCell][2][0] = h / 12.0;
+			matrM[iCell][1][2] = matrM[iCell][2][1] = 0.0;
+			matrM[iCell][2][2] = h / 80;
 		}
 	}
 }
@@ -364,7 +373,9 @@ void init() {
 
 		primToCons(r[i], p[i], u[i], ro[i][0], ru[i][0], re[i][0]);
 		for (int j = 1; j < FUNC_COUNT; j++) {
-			ro[i][j] = ru[i][j] = re[i][j] = 0.0;
+			ro[i][j] = 0.0;
+			ru[i][j] = 0.0;
+			re[i][j] = 0.0;
 		}
 		//double dt = CFL*h / (fabs(u[i]) + sqrt(GAM*p[i] / r[i]));
 		//if (dt < tau) tau = dt;
@@ -583,8 +594,8 @@ void calcMatrFlux() {
 				}
 			}
 
-			for (int ii = 1; ii < 3; ii++){
-				for (int jj = 1; jj < 3; jj++){
+			for (int ii = 0; ii < 3; ii++){ // !!!!!!!!!!!!!!!!!!!!!  for (int ii = 1; ii < 3; ii++)
+				for (int jj = 0; jj < 3; jj++){
 					for (int i = 0; i < FUNC_COUNT; i++){
 						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = -Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell, x1);
@@ -661,8 +672,8 @@ void calcMatrFlux() {
 				}
 			}
 
-			for (int ii = 1; ii < 3; ii++){
-				for (int jj = 1; jj < 3; jj++){
+			for (int ii = 0; ii < 3; ii++){  // !!!!!!!!!!!!!!!!!!!!!  for (int ii = 1; ii < 3; ii++)
+				for (int jj = 0; jj < 3; jj++){
 					for (int i = 0; i < FUNC_COUNT; i++){
 						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell + 1, x1);
@@ -730,8 +741,8 @@ void calcMatrFlux() {
 				}
 			}
 
-			for (int ii = 1; ii < 3; ii++){
-				for (int jj = 1; jj < 3; jj++){
+			for (int ii = 0; ii < 3; ii++){ // !!!!!!!!!!!!!!!!!!!!!  for (int ii = 1; ii < 3; ii++)
+				for (int jj = 0; jj < 3; jj++){
 					for (int i = 0; i < FUNC_COUNT; i++){
 						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = -Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell, x1);
@@ -879,8 +890,8 @@ void calcMatrFlux() {
 				}
 			}
 
-			for (int ii = 1; ii < 3; ii++){
-				for (int jj = 1; jj < 3; jj++){
+			for (int ii = 0; ii < 3; ii++){  // !!!!!!!!!!!!!!!!!!!!!  for (int ii = 1; ii < 3; ii++)
+				for (int jj = 0; jj < 3; jj++){
 					for (int i = 0; i < FUNC_COUNT; i++){
 						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = -Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell, x1);
@@ -1792,13 +1803,13 @@ double getField(int i, int iCell, double x){
 	double f2 = getF(2, iCell, x);
 	switch (i) {
 	case 0:
-		return ro[iCell][0] + ro[iCell][1] * f1 + ((FUNC_COUNT < 3) ? 0.0 : ro[iCell][2]) * f2;
+		return ro[iCell][0] + ro[iCell][1] * f1 + (FUNC_COUNT < 3 ? 0.0 : ro[iCell][2]) * f2;
 		break;
 	case 1:
-		return ru[iCell][0] + ru[iCell][1] * f1 + ((FUNC_COUNT < 3) ? 0.0 : ru[iCell][2]) * f2;
+		return ru[iCell][0] + ru[iCell][1] * f1 + (FUNC_COUNT < 3 ? 0.0 : ru[iCell][2]) * f2;
 		break;
 	case 2:
-		return re[iCell][0] + re[iCell][1] * f1 + ((FUNC_COUNT < 3) ? 0.0 : re[iCell][2]) * f2;
+		return re[iCell][0] + re[iCell][1] * f1 + (FUNC_COUNT < 3 ? 0.0 : re[iCell][2]) * f2;
 		break;
 	}
 }

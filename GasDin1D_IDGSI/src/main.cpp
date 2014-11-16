@@ -12,7 +12,7 @@ const double	CFL			=	1.e-3;
 
 const double	LIM_ALPHA	=	2.0;
 
-const int		N			=	200;
+const int		N			=	1000;
 const double	XMIN		=	-1.0;
 const double	XMAX		=	1.0;
 const double	EPS			=	1.0e-4;
@@ -20,8 +20,8 @@ const double	GAM			=	5.0 / 3.0;
 const double	AGAM		=	GAM - 1.0;
 const double	TMAX		=	0.07;
 
-const int		MAX_ITER	=	5000;
-const int		SAVE_STEP	=	100;
+const int		MAX_ITER	=	7000;
+const int		SAVE_STEP	=	1000;
 const int		PRINT_STEP	=	100;
 
 const double	h			=	(XMAX - XMIN) / N;
@@ -173,7 +173,7 @@ int main(int argc, char** argv)
 
 		//if (LIMITER_I) calcLimiterEigenv();
 
-		if (step%PRINT_STEP == 0) printf("step = %6d | time = %16.8E | iterations = %6d\n", step, t, iter);
+		if (step%PRINT_STEP == 0) printf("step = %6d | time = %16.8E | iterations = %6d | err = %16.8E\n", step, t, iter, err);
 		if (step%SAVE_STEP == 0) {
 			char fName[64];
 			sprintf(fName, "res_%08d.csv", step);

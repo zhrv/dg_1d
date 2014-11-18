@@ -8,11 +8,11 @@
 const int		FUNC_COUNT	=	3;
 const int		MATR_BLOCK	=	3 * FUNC_COUNT;
 
-const double	CFL			=	1.e-3;
+const double	CFL			=	1.e-2;
 
 const double	LIM_ALPHA	=	2.0;
 
-const int		N			=	1000;
+const int		N			=	800;
 const double	XMIN		=	-1.0;
 const double	XMAX		=	1.0;
 const double	EPS			=	1.0e-4;
@@ -21,12 +21,13 @@ const double	AGAM		=	GAM - 1.0;
 const double	TMAX		=	0.07;
 
 const int		MAX_ITER	=	7000;
-const int		SAVE_STEP	=	1000;
+const int		SAVE_STEP	=	700;
 const int		PRINT_STEP	=	100;
 
 const double	h			=	(XMAX - XMIN) / N;
-const double	tau			=	CFL*h; // <= 1.e-5
 const double	SIGMA		=	1.e-6;
+
+double			tau			=	CFL*h; // <= 1.e-5
 
 double **ro, **ru, **re;
 double **ro_, **ru_, **re_;
@@ -115,65 +116,53 @@ int main(int argc, char** argv)
 			memcpy(ru_[i], ru[i], FUNC_COUNT*sizeof(double));
 			memcpy(re_[i], re[i], FUNC_COUNT*sizeof(double));
 		}
-		int iter = 0;
-		double err;
-		do {
-			iter++;
-			for (int i = 0; i < N; i++) {
-				memset(dr[i], 0, FUNC_COUNT*sizeof(double));
-				memset(du[i], 0, FUNC_COUNT*sizeof(double));
-				memset(de[i], 0, FUNC_COUNT*sizeof(double));
+
+		// dt 1/2
+		for (int i = 0; i < N; i++) {
+			memset(dr[i], 0, FUNC_COUNT*sizeof(double));
+			memset(du[i], 0, FUNC_COUNT*sizeof(double));
+			memset(de[i], 0, FUNC_COUNT*sizeof(double));
+		}
+		calcIntegral();
+		calcFlux();
+		double tmpRO[FUNC_COUNT], tmpRU[FUNC_COUNT], tmpRE[FUNC_COUNT];
+		double delta;
+		double err = 0.0;
+		for (int i = 0; i < N; i++) {
+			multMatrVect(matrInvM[i], dr[i], tmpRO, FUNC_COUNT);
+			multMatrVect(matrInvM[i], du[i], tmpRU, FUNC_COUNT);
+			multMatrVect(matrInvM[i], de[i], tmpRE, FUNC_COUNT);
+			for (int j = 0; j < FUNC_COUNT; j++) {
+				ro[i][j] -= tau*tmpRO[j];
+				ru[i][j] -= tau*tmpRU[j];
+				re[i][j] -= tau*tmpRE[j];
 			}
-			calcIntegral();
-			calcFlux();
-			double tmpRO[FUNC_COUNT], tmpRU[FUNC_COUNT], tmpRE[FUNC_COUNT];
-			double dRO[FUNC_COUNT], dRU[FUNC_COUNT], dRE[FUNC_COUNT];
-			double delta;
-			err = 0.0;
-			for (int i = 0; i < N; i++) {
-				//for (int iF = 0; iF < FUNC_COUNT; iF++) {
-				//	dRO[iF] = (ro[i][iF] - ro_[i][iF]) / tau;
-				//	dRU[iF] = (ru[i][iF] - ru_[i][iF]) / tau;
-				//	dRE[iF] = (re[i][iF] - re_[i][iF]) / tau;
-				//}
-				//multMatrVect(matrM[i], dRO, tmpRO, FUNC_COUNT);
-				//multMatrVect(matrM[i], dRU, tmpRU, FUNC_COUNT);
-				//multMatrVect(matrM[i], dRE, tmpRE, FUNC_COUNT);
-				//for (int j = 0; j < FUNC_COUNT; j++) {
-				//	delta = SIGMA*(tmpRO[j] + dr[i][j]);
-				//	if (fabs(delta) > err) err = fabs(delta);
-				//	ro[i][j] -= delta;
+		}
 
-				//	delta = SIGMA*(tmpRU[j] + du[i][j]);
-				//	if (fabs(delta) > err) err = fabs(delta);
-				//	ru[i][j] -= delta;
+		//if (USE_LIMITER_I) calcLimiterEigenv();
 
-				//	delta = SIGMA*(tmpRE[j] + de[i][j]);
-				//	if (fabs(delta) > err) err = fabs(delta);
-				//	re[i][j] -= delta;
-				//}
-				multMatrVect(matrInvM[i], dr[i], tmpRO, FUNC_COUNT);
-				multMatrVect(matrInvM[i], du[i], tmpRU, FUNC_COUNT);
-				multMatrVect(matrInvM[i], de[i], tmpRE, FUNC_COUNT);
-				for (int j = 0; j < FUNC_COUNT; j++) {
-					delta = SIGMA*(tmpRO[j] + (ro[i][j] - ro_[i][j]) / tau);
-					if (fabs(delta) > err) err = fabs(delta);
-					ro[i][j] -= delta;
-
-					delta = SIGMA*(tmpRU[j] + (ru[i][j] - ru_[i][j]) / tau);
-					if (fabs(delta) > err) err = fabs(delta);
-					ru[i][j] -= delta;
-
-					delta = SIGMA*(tmpRE[j] + (re[i][j] - re_[i][j]) / tau);
-					if (fabs(delta) > err) err = fabs(delta);
-					re[i][j] -= delta;
-				}
+		// dt 2/2
+		for (int i = 0; i < N; i++) {
+			memset(dr[i], 0, FUNC_COUNT*sizeof(double));
+			memset(du[i], 0, FUNC_COUNT*sizeof(double));
+			memset(de[i], 0, FUNC_COUNT*sizeof(double));
+		}
+		calcIntegral();
+		calcFlux();
+		for (int i = 0; i < N; i++) {
+			multMatrVect(matrInvM[i], dr[i], tmpRO, FUNC_COUNT);
+			multMatrVect(matrInvM[i], du[i], tmpRU, FUNC_COUNT);
+			multMatrVect(matrInvM[i], de[i], tmpRE, FUNC_COUNT);
+			for (int j = 0; j < FUNC_COUNT; j++) {
+				ro[i][j] = (ro[i][j] + ro_[i][j] - tau*tmpRO[j]) * 0.5;
+				ru[i][j] = (ru[i][j] + ru_[i][j] - tau*tmpRU[j]) * 0.5;
+				re[i][j] = (re[i][j] + re_[i][j] - tau*tmpRE[j]) * 0.5;
 			}
-		} while (iter < MAX_ITER && err > EPS);
+		}
 
-		//if (LIMITER_I) calcLimiterEigenv();
+		//if (USE_LIMITER_I) calcLimiterEigenv();
 
-		if (step%PRINT_STEP == 0) printf("step = %6d | time = %16.8E | iterations = %6d | err = %16.8E\n", step, t, iter, err);
+		if (step%PRINT_STEP == 0) printf("step = %6d | time = %16.8E | iterations = %6d | err = %16.8E\n", step, t, 0, err);
 		if (step%SAVE_STEP == 0) {
 			char fName[64];
 			sprintf(fName, "res_%08d.csv", step);

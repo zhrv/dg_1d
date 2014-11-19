@@ -77,6 +77,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\..\..\..\Cloud%40Mail.Ru\dev\sci\1D\Implicit\GasDin1D_IDGSI\src\main.cpp" />
+    <ClCompile Include="..\..\..\..\..\..\Cloud%40Mail.Ru\dev\sci\1D\Implicit\GasDin1D_IDGSI\src\matr.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\..\..\..\..\Cloud%40Mail.Ru\dev\sci\1D\Implicit\GasDin1D_IDGSI\src\matr.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

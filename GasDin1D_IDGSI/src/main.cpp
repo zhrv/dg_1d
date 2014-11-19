@@ -4,29 +4,31 @@
 #include <cmath>
 #include <cfloat>
 #include <ctime>
+#include <cstdarg>
+
 
 const int		FUNC_COUNT	=	3;
 const int		MATR_BLOCK	=	3 * FUNC_COUNT;
 
-const double	CFL			=	1.e-3;
+const double	CFL			=	1.e-2;
 
 const double	LIM_ALPHA	=	2.0;
 
-const int		N			=	1000;
+const int		N			=	100;
 const double	XMIN		=	-1.0;
 const double	XMAX		=	1.0;
-const double	EPS			=	1.0e-4;
+const double	EPS			=	1.0e-5;
 const double	GAM			=	5.0 / 3.0;
 const double	AGAM		=	GAM - 1.0;
-const double	TMAX		=	0.07;
+double			TMAX		=	0.07;
 
 const int		MAX_ITER	=	7000;
-const int		SAVE_STEP	=	1000;
-const int		PRINT_STEP	=	100;
+const int		SAVE_STEP	=	50;
+const int		PRINT_STEP	=	1;
 
 const double	h			=	(XMAX - XMIN) / N;
-const double	tau			=	CFL*h; // <= 1.e-5
-const double	SIGMA		=	1.e-6;
+double			tau			=	CFL*h; // <= 1.e-5
+const double	SIGMA		=	1.e-5;
 
 double **ro, **ru, **re;
 double **ro_, **ru_, **re_;
@@ -41,6 +43,9 @@ double *smMu;
 
 FILE *hLog;
 
+double L_, R_, P_, U_, TIME_/*, E_, CV_, TIME_, MU_, KP_*/; // параметры обезразмеривания
+
+#define POW_2(X) ((X)*(X))
 
 #define FLUX     rim_orig
 #define FLUX_RHS flux_rim
@@ -60,6 +65,7 @@ double getFieldsAvg(int idField, int iCell, double x);
 /*  функции  */
 void init();
 void done();
+void LOG(char * format, ...);
 
 void primToCons(double r, double p, double u, double &ro, double &ru, double &re);
 void consToPrim(double &r, double &p, double &u, double ro, double ru, double re);
@@ -131,49 +137,49 @@ int main(int argc, char** argv)
 			double delta;
 			err = 0.0;
 			for (int i = 0; i < N; i++) {
-				//for (int iF = 0; iF < FUNC_COUNT; iF++) {
-				//	dRO[iF] = (ro[i][iF] - ro_[i][iF]) / tau;
-				//	dRU[iF] = (ru[i][iF] - ru_[i][iF]) / tau;
-				//	dRE[iF] = (re[i][iF] - re_[i][iF]) / tau;
-				//}
-				//multMatrVect(matrM[i], dRO, tmpRO, FUNC_COUNT);
-				//multMatrVect(matrM[i], dRU, tmpRU, FUNC_COUNT);
-				//multMatrVect(matrM[i], dRE, tmpRE, FUNC_COUNT);
-				//for (int j = 0; j < FUNC_COUNT; j++) {
-				//	delta = SIGMA*(tmpRO[j] + dr[i][j]);
-				//	if (fabs(delta) > err) err = fabs(delta);
-				//	ro[i][j] -= delta;
-
-				//	delta = SIGMA*(tmpRU[j] + du[i][j]);
-				//	if (fabs(delta) > err) err = fabs(delta);
-				//	ru[i][j] -= delta;
-
-				//	delta = SIGMA*(tmpRE[j] + de[i][j]);
-				//	if (fabs(delta) > err) err = fabs(delta);
-				//	re[i][j] -= delta;
-				//}
-				multMatrVect(matrInvM[i], dr[i], tmpRO, FUNC_COUNT);
-				multMatrVect(matrInvM[i], du[i], tmpRU, FUNC_COUNT);
-				multMatrVect(matrInvM[i], de[i], tmpRE, FUNC_COUNT);
+				for (int iF = 0; iF < FUNC_COUNT; iF++) {
+					dRO[iF] = (ro[i][iF] - ro_[i][iF]) / tau;
+					dRU[iF] = (ru[i][iF] - ru_[i][iF]) / tau;
+					dRE[iF] = (re[i][iF] - re_[i][iF]) / tau;
+				}
+				multMatrVect(matrM[i], dRO, tmpRO, FUNC_COUNT);
+				multMatrVect(matrM[i], dRU, tmpRU, FUNC_COUNT);
+				multMatrVect(matrM[i], dRE, tmpRE, FUNC_COUNT);
 				for (int j = 0; j < FUNC_COUNT; j++) {
-					delta = SIGMA*(tmpRO[j] + (ro[i][j] - ro_[i][j]) / tau);
+					delta = SIGMA*(tmpRO[j] + dr[i][j]);
 					if (fabs(delta) > err) err = fabs(delta);
 					ro[i][j] -= delta;
 
-					delta = SIGMA*(tmpRU[j] + (ru[i][j] - ru_[i][j]) / tau);
+					delta = SIGMA*(tmpRU[j] + du[i][j]);
 					if (fabs(delta) > err) err = fabs(delta);
 					ru[i][j] -= delta;
 
-					delta = SIGMA*(tmpRE[j] + (re[i][j] - re_[i][j]) / tau);
+					delta = SIGMA*(tmpRE[j] + de[i][j]);
 					if (fabs(delta) > err) err = fabs(delta);
 					re[i][j] -= delta;
 				}
+				//multMatrVect(matrInvM[i], dr[i], tmpRO, FUNC_COUNT);
+				//multMatrVect(matrInvM[i], du[i], tmpRU, FUNC_COUNT);
+				//multMatrVect(matrInvM[i], de[i], tmpRE, FUNC_COUNT);
+				//for (int j = 0; j < FUNC_COUNT; j++) {
+				//	delta = SIGMA*(tmpRO[j] + (ro[i][j] - ro_[i][j]) / tau);
+				//	if (fabs(delta) > err) err = fabs(delta);
+				//	ro[i][j] -= delta;
+
+				//	delta = SIGMA*(tmpRU[j] + (ru[i][j] - ru_[i][j]) / tau);
+				//	if (fabs(delta) > err) err = fabs(delta);
+				//	ru[i][j] -= delta;
+
+				//	delta = SIGMA*(tmpRE[j] + (re[i][j] - re_[i][j]) / tau);
+				//	if (fabs(delta) > err) err = fabs(delta);
+				//	re[i][j] -= delta;
+				//}
 			}
 		} while (iter < MAX_ITER && err > EPS);
 
 		//if (LIMITER_I) calcLimiterEigenv();
 
-		if (step%PRINT_STEP == 0) printf("step = %6d | time = %16.8E | iterations = %6d | err = %16.8E\n", step, t, iter, err);
+		if (step%PRINT_STEP == 0) LOG("step = %6d | time = %16.8E | iterations = %6d | err = %16.8E\n", step, t*TIME_, iter, err);
 		if (step%SAVE_STEP == 0) {
 			char fName[64];
 			sprintf(fName, "res_%08d.csv", step);
@@ -185,7 +191,7 @@ int main(int argc, char** argv)
 				double fRE = getField(2, i, x);
 				double r,p,u;
 				consToPrim(r, p, u, fRO, fRU, fRE);
-				fprintf(fp, "%16.8E, %16.8E, %16.8E, %16.8E\n", x, r, p, u);
+				fprintf(fp, "%16.8E, %16.8E, %16.8E, %16.8E\n", x, r*R_, p*P_, u*U_);
 			}
 			fclose(fp);
 		}
@@ -651,17 +657,45 @@ void init() {
 		u[i] = -2.0*sqrt(e*AGAM*GAM) / AGAM;
 		p[i] = r[i] * e*AGAM;
 
+		//double dt = CFL*h / (fabs(u[i]) + sqrt(GAM*p[i] / r[i]));
+		//if (dt < tau) tau = dt;
+	}
+	printf("TAU = %25.16e\n\n", tau);
+
+	double maxR = r[0];
+	double maxP = p[0];
+	for (int i = 1; i < N; i++) {
+		if (maxR < r[i]) maxR = r[i];
+		if (maxP < r[i]) maxP = p[i];
+	}
+
+	// параметры обезразмеривания
+	L_ = 1.0;
+	R_ = 1.0; //maxR;					// характерная плотность = начальная плотность
+	P_ = 1.0; //maxP;					// характерное давление = начальное давление 
+	//T_ = maxT;					// характерная температура = начальная температура
+	U_ = 1.0; //sqrt(P_ / R_);		// характерная скорость = sqrt( P_ / R_ )
+	//E_ = POW_2(U_);			// характерная энергия  = U_**2
+	//CV_ = POW_2(U_) / T_;	// характерная теплоёмкость  = U_**2 / T_
+	TIME_ = 1.0; //L_ / U_;			// характерное время
+	//MU_ = R_ * U_ * L_;		// характерная вязкость = R_ * U_ * L_
+	///KP_ = R_ * POW_2(U_) * U_ * L_ / T_;	// коэффициент теплопроводности = R_ * U_**3 * L_ / T_
+	//CV_ = POW_2(U_) / T_;	// характерная теплоёмкость  = U_**2 / T_
+
+	for (int i = 0; i < N; i++) {
+		r[i] /= R_;
+		p[i] /= P_;
+		u[i] /= U_;
 		primToCons(r[i], p[i], u[i], ro[i][0], ru[i][0], re[i][0]);
 		for (int j = 1; j < FUNC_COUNT; j++) {
 			ro[i][j] = 0.0;
 			ru[i][j] = 0.0;
 			re[i][j] = 0.0;
 		}
-		//double dt = CFL*h / (fabs(u[i]) + sqrt(GAM*p[i] / r[i]));
-		//if (dt < tau) tau = dt;
 	}
-	printf("TAU = %25.16e\n\n", tau);
 
+	TMAX /= TIME_;
+	tau	 /= TIME_;
 
 	calcMassMatr();
 
@@ -1635,3 +1669,19 @@ void URS(int iCase, double& r, double& p, double& e, double gam) {
 		break;
 	}
 }// URS
+
+
+void LOG(char * format, ...)
+{
+	va_list arglist;
+
+	va_start(arglist, format);
+
+	vprintf(format, arglist);
+	vfprintf(hLog, format, arglist);
+
+	va_end(arglist);
+
+	fflush(stdout);
+	fflush(hLog);
+}

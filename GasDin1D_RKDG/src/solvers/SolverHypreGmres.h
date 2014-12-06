@@ -7,6 +7,6 @@ public:
 	virtual char* getName() { return "HYPRE GMRES"; }
 	void setParameter(const char* name, int val);
 private:
-	int KRYLOV_DIM = 30;
+	int KRYLOV_DIM = 20;
 };
 

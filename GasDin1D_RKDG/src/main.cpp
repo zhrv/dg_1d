@@ -7,23 +7,27 @@
 #include <float.h>
 #include "global.h"
 
-const int		FUNC_COUNT	= 2;
+const int		FUNC_COUNT	= 3;
 const int		MATR_BLOCK	= 3 * FUNC_COUNT;
+const char*		SOLVER_NAME = "HYPRE_GMRES"; // ZEIDEL, CUSTOM_HYPRE_SEIDEL, HYPRE_FlexGMRESPrecAMG, HYPRE_BoomerAMG, HYPRE_PCG, HYPRE_FlexGMRES, HYPRE_GMRES
 
-const double	CFL			= 1.e-3;
+const double	XMIN = -1.0;
+const double	XMAX = 1.0;
 
-const double	LIM_ALPHA	= 1.5;
+int		N		= 200;
+double	h		= (XMAX - XMIN) / N;
+double	CFL		= 1.0e-2;
+double	tau		= CFL*h; // <= 1.e-5
+double	EPS		= 1.e-3;
 
-const int		N		= 400;
-const double	XMIN	= -1.0; 
-const double	XMAX	=  1.0;
-const double	EPS		= 1.0e-4;
+const double	LIM_ALPHA	= 2.0;
+
 const double	GAM		= 5.0/3.0;
 const double	AGAM	= GAM-1.0;
-const double	TMAX	= 0.07;
+const double	TMAX	= 0.05;
 
 const int		MAX_ITER	= 5000;
-const int		SAVE_STEP	= 1000;
+const int		SAVE_STEP	= 50;
 const int		PRINT_STEP	= 1;
 
 double **ro, **ru, **re;
@@ -36,20 +40,21 @@ double **cellGP, **cellGW, *cellC;
 
 double *smMu;
 
-double h	=	(XMAX-XMIN)/N;
-double tau = CFL*h; // <= 1.e-5
 
-#define FLUX     roe_orig
+#define FLUX     rim_orig
 #define FLUX_RHS flux_rim
 
 #define LIMITER_I  calcLimiterEigenv
 #define LIMITER_II calcLimiter_II
 
-const bool USE_LIMITER_I	= false;
+const bool USE_LIMITER_I	= true;
 const bool USE_LIMITER_II	= false;
 const bool USE_SMOOTHER		= false;
 
 MatrixSolver *S;
+
+int mpi_rank, mpi_size;
+
 
 /*  базисные функции и поля  */
 double getField(int i, int iCell, double x);
@@ -59,6 +64,7 @@ double getFieldsAvg(int idField, int iCell, double x);
 /*  функции  */
 void init();
 void done();
+void saveCSV(int step);
 
 void primToCons(double r, double p, double u, double &ro, double &ru, double &re);
 void consToPrim(double &r, double &p, double &u, double ro, double ru, double re);
@@ -77,13 +83,24 @@ int main(int argc, char** argv)
 #ifdef _DEBUG
 	_controlfp(~(_MCW_EM & (~_EM_INEXACT) & (~_EM_UNDERFLOW)), _MCW_EM);
 #endif
+	if (argc == 3) {
+		N	= atoi(argv[1]);
+		h	= (XMAX - XMIN) / N;
+		CFL	= atof(argv[2]);
+		tau	= CFL*h;
+		EPS = 1.e-5;//h*2.5e-4;
+	} else 
+	if (argc != 1) {
+		log("ERROR: wrong parameters!!!\n\nUsage:\n%s <cells count> <CFL>");
+	}
 	MPI_Init(&argc, &argv);
 	init();
-	double t = 0.0;
-	int step = 0;
+
+
+	double t = tau;
+	int step = 1;
 	while (t < TMAX) {
-		t += tau;
-		step++;
+		double start_t = MPI_Wtime();  
 		S->zero();
 		//S->setParameter("PRINT_LEVEL",2);
 		
@@ -106,34 +123,29 @@ int main(int argc, char** argv)
 				re[iCell][j] += S->x[ind + (shift++)];
 		}
 
-		for (int iCell = 0; iCell < N; iCell++) {
-			consToPrim(r[iCell], p[iCell], u[iCell], ro[iCell][0], ru[iCell][0], re[iCell][0]);
-		}
+		//for (int iCell = 0; iCell < N; iCell++) {
+		//	consToPrim(r[iCell], p[iCell], u[iCell], ro[iCell][0], ru[iCell][0], re[iCell][0]);
+		//}
 
 		if (USE_LIMITER_I)  LIMITER_I();
 		if (USE_LIMITER_II) LIMITER_II();
 		if (USE_SMOOTHER)   calcSmoother();
 
-		for (int iCell = 0; iCell < N; iCell++) {
-			consToPrim(r[iCell], p[iCell], u[iCell], ro[iCell][0], ru[iCell][0], re[iCell][0]);
-		}
+		//for (int iCell = 0; iCell < N; iCell++) {
+		//	consToPrim(r[iCell], p[iCell], u[iCell], ro[iCell][0], ru[iCell][0], re[iCell][0]);
+		//}
 
+		double end_t = MPI_Wtime();   // get time now
+		if (step % PRINT_STEP == 0) printf("%10d | ITER: %4d | time elapsed: %10.6f sec. \n", step, maxIter, end_t - start_t);
+		
+		if ((step % SAVE_STEP == 0) && (argc == 1)) saveCSV(step);
 
-		if (step % PRINT_STEP == 0) {
-			printf("%10d | ITER: %4d | RO: ... | RU: ... | RE ... \n", step, maxIter);
-		}
-		if (step % SAVE_STEP == 0) {
-			char str[50];
-			sprintf(str, "res_%010d.csv", step);
-			FILE * fp = fopen(str, "w");
-			//fprintf(fp, "x,r,p,u\n");
-			for (int i = 0; i < N; i++) {
-				fprintf(fp, "%25.15e, %25.15e, %25.15e, %25.15e\n", XMIN+h*i, r[i], p[i], u[i]);
-			}
-			fclose(fp);
-			log("           | File '%s' is written...\n", str);
-		}
+		t += tau;
+		step++;
 	}
+	
+	/* принудительная запись последнего шага  */
+	saveCSV(step); 
 
 
 	fclose(hLog);
@@ -141,9 +153,44 @@ int main(int argc, char** argv)
 	return 0;
 }
 
+void saveCSV(int step)
+{
+	char str[50];
+	sprintf(str, "res_gp_%010d.csv", step);
+	FILE * fp = fopen(str, "w");
+	//fprintf(fp, "x,r,p,u\n");
+	for (int i = 0; i < N; i++) {
+		for (int j = 0; j < 2; j++) {
+			double &xg = cellGP[i][j];
+			double &wg = cellGW[i][j];
+			double fRO = getField(0, i, xg);
+			double fRU = getField(1, i, xg);
+			double fRE = getField(2, i, xg);
+			double r, p, u;
+			consToPrim(r, p, u, fRO, fRU, fRE);
+			fprintf(fp, "%25.15E, %25.15E, %25.15E, %25.15E, %25.15E\n", xg, r, p, u, wg);
+		}
+	}
+	//fprintf(fp, "\n\n\n\n===================================================================================\n");
+	//fprintf(fp, "COLUMNS:   xg, r, p, u, wg\n-----------------------------------------------------------------------------------\n\n", step);
+	//fprintf(fp, "STEP:      %16d\n\n", step);
+	//fprintf(fp, "N:         %16d\n", N);
+	//fprintf(fp, "CFL:       %16.6E\n", CFL);
+	//fprintf(fp, "TAU:       %16.6E\n", tau);
+	//fprintf(fp, "MAX STEP:  %16d\n", (int)(TMAX / tau));
+	//fprintf(fp, "SAVE STEP: %16d\n", SAVE_STEP);
+	//fprintf(fp, "\n");
+	//fprintf(fp, "SOLVER: %s\n", SOLVER_NAME);
+	//fprintf(fp, "    EPS:        %16.6E\n", EPS);
+	//fprintf(fp, "    MAX ITER:   %16d\n", MAX_ITER);
 
 
-void memAlloc() {
+	fclose(fp);
+	log("           | File '%s' is written...\n", str);
+}
+
+void memAlloc() 
+{
 	ro = new double*[N];
 	ru = new double*[N];
 	re = new double*[N];
@@ -290,7 +337,25 @@ void calcMassMatr() {
 }
 
 
+void logStartupInfo()
+{
+	log("N:         %16d\n", N);
+	log("CFL:       %16.6E\n", CFL);
+	log("TAU:       %16.6E\n", tau);
+	log("MAX STEP:  %16d\n", (int)(TMAX / tau));
+	log("SAVE STEP: %16d\n", SAVE_STEP);
+	log("\n");
+	log("SOLVER: %s\n", SOLVER_NAME);
+	log("    EPS:        %16.6E\n", EPS);
+	log("    MAX ITER:   %16d\n", MAX_ITER);
+}
+
+
 void init() {
+
+	MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+	MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
+
 	char *logName = new char[128];
 	time_t t = time(0);   // get time now
 	struct tm * now = localtime(&t);
@@ -314,7 +379,7 @@ void init() {
 		cellC[i] = 0.50*(x1 + x2);
 	}
 
-	S = MatrixSolver::create("HYPRE_GMRES");
+	S = MatrixSolver::create(SOLVER_NAME);
 	S->init(N, MATR_BLOCK);
 	for (int i = 0; i < N; i++) {
 		double x = cellC[i];
@@ -380,10 +445,12 @@ void init() {
 		//double dt = CFL*h / (fabs(u[i]) + sqrt(GAM*p[i] / r[i]));
 		//if (dt < tau) tau = dt;
 	}
-	printf("TAU = %25.16e\n\n", tau);
-
+	
 
 	calcMassMatr();
+
+	logStartupInfo();
+
 
 }
 
@@ -523,8 +590,8 @@ void calcMatrFlux() {
 				}
 			}
 
-			for (int ii = 1; ii < 3; ii++){
-				for (int jj = 1; jj < 3; jj++){
+			for (int ii = 0; ii < 3; ii++){ // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! for (int ii = 1; ii < 3; ii++){
+				for (int jj = 0; jj < 3; jj++){
 					for (int i = 0; i < FUNC_COUNT; i++){
 						for (int j = 0; j < FUNC_COUNT; j++){
 							matr[i][j] = Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell + 1, x1);
@@ -569,7 +636,7 @@ void calcMatrFlux() {
 			}
 
 			//осреднение по Роу
-			double x1 = cellC[iCell] + 0.50*h;
+			double x1 = cellC[iCell] - 0.50*h;
 
 			double ROl = getField(0, iCell-1, x1);
 			double RUl = getField(1, iCell-1, x1);
@@ -718,7 +785,7 @@ void calcMatrFlux() {
 			}
 
 			//осреднение по Роу
-			double x1 = cellC[iCell] + 0.50*h;
+			double x1 = cellC[iCell] - 0.50*h;
 
 			double ROr = getField(0, iCell, x1);
 			double RUr = getField(1, iCell, x1);
@@ -865,7 +932,7 @@ void calcMatrFlux() {
 			}
 
 			//осреднение по Роу
-			double x1 = cellC[iCell] + 0.50*h;
+			double x1 = cellC[iCell] - 0.50*h;
 
 			double ROl = getField(0, iCell-1, x1);
 			double RUl = getField(1, iCell-1, x1);
@@ -1618,7 +1685,7 @@ void calcLimiter_II() {
 				re[i][1] = 0.0;
 				if (FUNC_COUNT > 2) re[i][2] = 0.0;
 				printf("WARNING: bad cell #%d\n", i);
-				break;
+				k = 5;
 			}
 			
 		}

@@ -11,14 +11,17 @@ const int		FUNC_COUNT	= 3;
 const int		MATR_BLOCK	= 3 * FUNC_COUNT;
 const char*		SOLVER_NAME = "HYPRE_GMRES"; // ZEIDEL, CUSTOM_HYPRE_SEIDEL, HYPRE_FlexGMRESPrecAMG, HYPRE_BoomerAMG, HYPRE_PCG, HYPRE_FlexGMRES, HYPRE_GMRES
 
-const double	XMIN = -1.0;
-const double	XMAX = 1.0;
+const double	G_XMIN = -1.0;
+const double	G_XMAX = 1.0;
 
-int		N		= 200;
-double	h		= (XMAX - XMIN) / N;
+int		G_N		= 200;
+double	h		= (G_XMAX - G_XMIN) / G_N;
 double	CFL		= 1.0e-2;
 double	tau		= CFL*h; // <= 1.e-5
 double	EPS		= 1.e-3;
+
+double XMIN, XMAX;
+int N;
 
 const double	LIM_ALPHA	= 2.0;
 
@@ -53,8 +56,8 @@ const bool USE_SMOOTHER		= false;
 
 MatrixSolver *S;
 
-int mpi_rank, mpi_size;
-
+extern int mpi_rank, mpi_size;
+double mpi_buf[1024];
 
 /*  базисные функции и поля  */
 double getField(int i, int iCell, double x);
@@ -78,6 +81,8 @@ void calcLimiterEigenv();
 void calcLimiter_II();
 void calcSmoother();
 
+void procExchange();
+
 int main(int argc, char** argv) 
 {
 #ifdef _DEBUG
@@ -95,7 +100,7 @@ int main(int argc, char** argv)
 	}
 	MPI_Init(&argc, &argv);
 	init();
-
+	procExchange();
 
 	double t = tau;
 	int step = 1;
@@ -109,10 +114,14 @@ int main(int argc, char** argv)
 		calcMatrFlux();			// Вычисляем потоковые величины 
 		calcRHS();				// Вычисляем столбец правых членов
 
+		MPI_Barrier(MPI_COMM_WORLD);
+
 		int maxIter = MAX_ITER;
 		
 		S->solve(EPS, maxIter);
 		
+		MPI_Barrier(MPI_COMM_WORLD);
+
 		for (int iCell = 0, ind = 0; iCell < N; iCell++, ind += MATR_BLOCK) {
 			int shift = 0;
 			for (int j = 0; j < FUNC_COUNT; j++)
@@ -123,13 +132,20 @@ int main(int argc, char** argv)
 				re[iCell][j] += S->x[ind + (shift++)];
 		}
 
+		procExchange();
+
 		//for (int iCell = 0; iCell < N; iCell++) {
 		//	consToPrim(r[iCell], p[iCell], u[iCell], ro[iCell][0], ru[iCell][0], re[iCell][0]);
 		//}
 
 		if (USE_LIMITER_I)  LIMITER_I();
+		procExchange();
+
 		if (USE_LIMITER_II) LIMITER_II();
+		procExchange();
+		
 		if (USE_SMOOTHER)   calcSmoother();
+		procExchange();
 
 		//for (int iCell = 0; iCell < N; iCell++) {
 		//	consToPrim(r[iCell], p[iCell], u[iCell], ro[iCell][0], ru[iCell][0], re[iCell][0]);
@@ -138,6 +154,8 @@ int main(int argc, char** argv)
 		double end_t = MPI_Wtime();   // get time now
 		if (step % PRINT_STEP == 0) printf("%10d | ITER: %4d | time elapsed: %10.6f sec. \n", step, maxIter, end_t - start_t);
 		
+		MPI_Barrier(MPI_COMM_WORLD);
+
 		if ((step % SAVE_STEP == 0) && (argc == 1)) saveCSV(step);
 
 		t += tau;
@@ -153,52 +171,115 @@ int main(int argc, char** argv)
 	return 0;
 }
 
+
+void procExchange()
+{
+	int shift;
+	MPI_Status st;
+
+	/* передача вправо */
+	if (mpi_rank > 0) {
+		// обмен с соседом слева
+		MPI_Recv(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank - 1, 0, MPI_COMM_WORLD, &st);
+		shift = 0;
+		memcpy(&(ro[N]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&(ru[N]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&(re[N]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT);
+	}
+	else { // ГУ слева
+		
+	}
+
+	if (mpi_rank < mpi_size - 1) {
+		// обмен с соседом справа
+		shift = 0;
+		memcpy(&mpi_buf[shift], &(ro[N - 1]), sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&mpi_buf[shift], &(ru[N - 1]), sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&mpi_buf[shift], &(re[N - 1]), sizeof(double)*FUNC_COUNT);
+		MPI_Send(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank + 1, 0, MPI_COMM_WORLD);
+
+	}
+
+
+	/* передача влево */
+	if (mpi_rank > 0) {
+		shift = 0;
+		memcpy(&mpi_buf[shift], &(ro[0]), sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&mpi_buf[shift], &(ru[0]), sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&mpi_buf[shift], &(re[0]), sizeof(double)*FUNC_COUNT);
+		MPI_Send(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank - 1, 0, MPI_COMM_WORLD);
+	}
+
+	if (mpi_rank < mpi_size - 1) {
+		MPI_Recv(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank + 1, 0, MPI_COMM_WORLD, &st);
+		shift = 0;
+		memcpy(&(ro[N + 1]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&(ru[N + 1]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&(re[N + 1]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT);
+	}
+	else { // ГУ слева
+		
+	}
+
+
+
+}
+
 void saveCSV(int step)
 {
 	char str[50];
 	sprintf(str, "res_gp_%010d.csv", step);
-	FILE * fp = fopen(str, "w");
-	//fprintf(fp, "x,r,p,u\n");
-	for (int i = 0; i < N; i++) {
-		for (int j = 0; j < 2; j++) {
-			double &xg = cellGP[i][j];
-			double &wg = cellGW[i][j];
-			double fRO = getField(0, i, xg);
-			double fRU = getField(1, i, xg);
-			double fRE = getField(2, i, xg);
-			double r, p, u;
-			consToPrim(r, p, u, fRO, fRU, fRE);
-			fprintf(fp, "%25.15E, %25.15E, %25.15E, %25.15E, %25.15E\n", xg, r, p, u, wg);
-		}
+	if (mpi_rank == 0) {
+		FILE * fp = fopen(str, "w");
+		fclose(fp);
 	}
-	//fprintf(fp, "\n\n\n\n===================================================================================\n");
-	//fprintf(fp, "COLUMNS:   xg, r, p, u, wg\n-----------------------------------------------------------------------------------\n\n", step);
-	//fprintf(fp, "STEP:      %16d\n\n", step);
-	//fprintf(fp, "N:         %16d\n", N);
-	//fprintf(fp, "CFL:       %16.6E\n", CFL);
-	//fprintf(fp, "TAU:       %16.6E\n", tau);
-	//fprintf(fp, "MAX STEP:  %16d\n", (int)(TMAX / tau));
-	//fprintf(fp, "SAVE STEP: %16d\n", SAVE_STEP);
-	//fprintf(fp, "\n");
-	//fprintf(fp, "SOLVER: %s\n", SOLVER_NAME);
-	//fprintf(fp, "    EPS:        %16.6E\n", EPS);
-	//fprintf(fp, "    MAX ITER:   %16d\n", MAX_ITER);
+ 	for (int  proc = 0; proc < mpi_size; proc++) {
+		if (mpi_rank == proc) {
+			FILE * fp = fopen(str, "w");
+			//fprintf(fp, "x,r,p,u\n");
+			for (int i = 0; i < N; i++) {
+				for (int j = 0; j < 2; j++) {
+					double &xg = cellGP[i][j];
+					double &wg = cellGW[i][j];
+					double fRO = getField(0, i, xg);
+					double fRU = getField(1, i, xg);
+					double fRE = getField(2, i, xg);
+					double r, p, u;
+					consToPrim(r, p, u, fRO, fRU, fRE);
+					fprintf(fp, "%25.15E, %25.15E, %25.15E, %25.15E, %25.15E\n", xg, r, p, u, wg);
+				}
+			}
+			//fprintf(fp, "\n\n\n\n===================================================================================\n");
+			//fprintf(fp, "COLUMNS:   xg, r, p, u, wg\n-----------------------------------------------------------------------------------\n\n", step);
+			//fprintf(fp, "STEP:      %16d\n\n", step);
+			//fprintf(fp, "N:         %16d\n", N);
+			//fprintf(fp, "CFL:       %16.6E\n", CFL);
+			//fprintf(fp, "TAU:       %16.6E\n", tau);
+			//fprintf(fp, "MAX STEP:  %16d\n", (int)(TMAX / tau));
+			//fprintf(fp, "SAVE STEP: %16d\n", SAVE_STEP);
+			//fprintf(fp, "\n");
+			//fprintf(fp, "SOLVER: %s\n", SOLVER_NAME);
+			//fprintf(fp, "    EPS:        %16.6E\n", EPS);
+			//fprintf(fp, "    MAX ITER:   %16d\n", MAX_ITER);
 
 
-	fclose(fp);
+			fclose(fp);
+		}
+		MPI_Barrier(MPI_COMM_WORLD);
+	}
 	log("           | File '%s' is written...\n", str);
 }
 
 void memAlloc() 
 {
-	ro = new double*[N];
-	ru = new double*[N];
-	re = new double*[N];
-	ro_ = new double*[N];
-	ru_ = new double*[N];
-	re_ = new double*[N];
+	ro = new double*[N + 2];
+	ru = new double*[N + 2];
+	re = new double*[N + 2];
+	ro_ = new double*[N + 2];
+	ru_ = new double*[N + 2];
+	re_ = new double*[N + 2];
 	matrM = new double**[N];
-	cellGP = new double*[N];
+	cellGP = new double*[N ];
 	cellGW = new double*[N];
 	cellC = new double[N];
 	for (int i = 0; i < N; i++) {
@@ -215,9 +296,9 @@ void memAlloc()
 			matrM[i][j] = new double[FUNC_COUNT];
 		}
 	}
-	r = new double[N];
-	u = new double[N];
-	p = new double[N];
+	r = new double[N + 2];
+	u = new double[N + 2];
+	p = new double[N + 2];
 	vect = new double[FUNC_COUNT];
 	matr = new double*[FUNC_COUNT];
 	matr1 = new double*[FUNC_COUNT];
@@ -364,6 +445,10 @@ void init() {
 
 	hLog = fopen(logName, "w");
 
+	N = G_N / mpi_size;
+	XMIN = G_XMIN + N*h*mpi_rank;
+	XMAX = XMIN + h*N;
+
 	memAlloc();
 	
 	// узлы квадратур Гаусса и центры ячеек
@@ -380,7 +465,7 @@ void init() {
 	}
 
 	S = MatrixSolver::create(SOLVER_NAME);
-	S->init(N, MATR_BLOCK);
+	S->init(G_N, MATR_BLOCK, mpi_rank, mpi_size);
 	for (int i = 0; i < N; i++) {
 		double x = cellC[i];
 		// Sod  !!! XMIN = -1.0; XMAX = 1.0;
@@ -790,7 +875,10 @@ void calcMatrFlux() {
 			double ROr = getField(0, iCell, x1);
 			double RUr = getField(1, iCell, x1);
 			double REr = getField(2, iCell, x1);
-			//consToPrim(rb, pb, ub, ROl, RUl, REl);
+			double ROl = getField(0, N, x1);
+			double RUl = getField(1, N, x1);
+			double REl = getField(2, N, x1);
+			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
 			rb = re; pb = pe; ub = ue;
 			FLUX(ri, ei, pi, ui, vi, wi,
@@ -865,11 +953,11 @@ void calcMatrFlux() {
 			double ROl = getField(0, iCell, x1);
 			double RUl = getField(1, iCell, x1);
 			double REl = getField(2, iCell, x1);
-			//double ROr = getField(0, iCell + 1, x1);
-			//double RUr = getField(1, iCell + 1, x1);
-			//double REr = getField(2, iCell + 1, x1);
+			double ROr = getField(0, N + 1, x1);
+			double RUr = getField(1, N + 1, x1);
+			double REr = getField(2, N + 1, x1);
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
-			//consToPrim(re, pe, ue, ROr, RUr, REr);
+			consToPrim(re, pe, ue, ROr, RUr, REr);
 			re = rb; pe = pb; ue = ub;
 			FLUX(ri, ei, pi, ui, vi, wi,
 				rb, pb, ub, vb, wb,
@@ -1136,13 +1224,13 @@ void calcRHS() {
 		}
 		{ // iCell-1/2
 			double x = cellC[iCell]-0.5*h;
-			//double ROl = getField(0, iCell-1, x);
-			//double RUl = getField(1, iCell-1, x);
-			//double REl = getField(2, iCell-1, x);
+			double ROl = getField(0, N, x);
+			double RUl = getField(1, N, x);
+			double REl = getField(2, N, x);
 			double ROr = getField(0, iCell, x);
 			double RUr = getField(1, iCell, x);
 			double REr = getField(2, iCell, x);
-			//consToPrim(rb, pb, ub, ROl, RUl, REl);
+			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
 			rb = re; pb = pe; ub = ue;
 			FLUX_RHS(fRO, fRU, fRE, rb, pb, ub, re, pe, ue, GAM);
@@ -1173,11 +1261,11 @@ void calcRHS() {
 			double ROl = getField(0, iCell, x);
 			double RUl = getField(1, iCell, x);
 			double REl = getField(2, iCell, x);
-			//double ROr = getField(0, iCell+1, x);
-			//double RUr = getField(1, iCell+1, x);
-			//double REr = getField(2, iCell+1, x);
+			double ROr = getField(0, N+1, x);
+			double RUr = getField(1, N+1, x);
+			double REr = getField(2, N+1, x);
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
-			//consToPrim(re, pe, ue, ROr, RUr, REr);
+			consToPrim(re, pe, ue, ROr, RUr, REr);
 			re = rb; pe = pb; ue = ub;
 			FLUX_RHS(fRO, fRU, fRE, rb, pb, ub, re, pe, ue, GAM);
 			int shift = 0;

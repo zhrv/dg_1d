@@ -17,12 +17,13 @@ void SolverHypre::initMatrVectors()
 	HYPRE_IJVectorInitialize(xx);
 }
 
-void SolverHypre::init(int cellsCount, int blockDimension)
+void SolverHypre::init(int cellsCount, int blockDimension, int rank, int size)
 {
 	blockDim = blockDimension;
 	int n = cellsCount*blockDim;
-	ilower = 0;
-	iupper = n - 1;
+	int n_loc = n / size;
+	ilower = rank*n_loc;//0;
+	iupper = ((rank == size-1) ? n - 1 : ilower+n_loc-1);
 	local_size = iupper - ilower + 1;
 
 	cols	= new int[blockDim];
@@ -68,11 +69,11 @@ void SolverHypre::setMatrElement(int i, int j, double** matrDim)
 
 	for (int ii = 0; ii < blockDim; ++ii)
 	{
-		row = ii + i*blockDim;
+		row = ilower+ii + i*blockDim;
 		for (int jj = 0; jj < blockDim; ++jj)
 		{
 			values[jj] = matrDim[ii][jj];
-			cols[jj] = jj + j*blockDim;
+			cols[jj] = ilower+jj + j*blockDim;
 		}
 		HYPRE_IJMatrixSetValues(A, 1, &blockDim, &row, cols, values);
 	}
@@ -86,11 +87,11 @@ void SolverHypre::addMatrElement(int i, int j, double** matrDim)
 
 	for (int ii = 0; ii < blockDim; ++ii)
 	{
-		row = ii + i*blockDim;
+		row = ilower+ii + i*blockDim;
 		for (int jj = 0; jj < blockDim; ++jj)
 		{
 			values[jj] = matrDim[ii][jj];
-			cols[jj] = jj + j*blockDim;
+			cols[jj] = ilower+jj + j*blockDim;
 		}
 		HYPRE_IJMatrixAddToValues(A, 1, &blockDim, &row, cols, values);
 	}
@@ -102,7 +103,7 @@ void SolverHypre::setRightElement(int i, double* vectDim)
 {
 	for (int ii = 0; ii < blockDim; ++ii)
 	{
-		cols[ii] = ii + i*blockDim;
+		cols[ii] = ilower+ii + i*blockDim;
 	}
 	HYPRE_IJVectorSetValues(bb, blockDim, cols, vectDim);
 }
@@ -112,7 +113,7 @@ void SolverHypre::addRightElement(int i, double* vectDim)
 {
 	for (int ii = 0; ii < blockDim; ++ii)
 	{
-		cols[ii] = ii + i*blockDim;
+		cols[ii] = ilower+ii + i*blockDim;
 	}
 	HYPRE_IJVectorAddToValues(bb, blockDim, cols, vectDim);
 }

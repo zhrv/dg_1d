@@ -21,7 +21,7 @@ public:
 	
 	virtual ~MatrixSolver();
 
-	virtual void init(int cellsCount, int blockDimension);
+	virtual void init(int cellsCount, int blockDimension, int rank, int size);
 	
 	virtual void zero();
 	

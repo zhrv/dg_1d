@@ -49,7 +49,7 @@ MatrixSolver* MatrixSolver::create(const char* solverName)
 
 
 
-void MatrixSolver::init(int cellsCount, int blockDimension)
+void MatrixSolver::init(int cellsCount, int blockDimension, int rank, int size)
 {
 	blockDim = blockDimension;
 	int n = cellsCount*blockDim;

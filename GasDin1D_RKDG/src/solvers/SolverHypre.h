@@ -6,7 +6,7 @@ class SolverHypre :
 public:
 	~SolverHypre();
 	
-	virtual void init(int cellsCount, int blockDimension);
+	virtual void init(int cellsCount, int blockDimension, int rank, int size);
 
 	virtual void zero();
 

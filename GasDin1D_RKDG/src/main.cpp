@@ -14,7 +14,7 @@ const char*		SOLVER_NAME = "HYPRE_GMRES"; // ZEIDEL, CUSTOM_HYPRE_SEIDEL, HYPRE_
 const double	G_XMIN = -1.0;
 const double	G_XMAX = 1.0;
 
-int		G_N		= 200;
+int		G_N		= 1600;
 double	h		= (G_XMAX - G_XMIN) / G_N;
 double	CFL		= 1.0e-2;
 double	tau		= CFL*h; // <= 1.e-5
@@ -30,8 +30,8 @@ const double	AGAM	= GAM-1.0;
 const double	TMAX	= 0.05;
 
 const int		MAX_ITER	= 5000;
-const int		SAVE_STEP	= 50;
-const int		PRINT_STEP	= 1;
+const int		SAVE_STEP	= 1000;
+const int		PRINT_STEP	= 100;
 
 double **ro, **ru, **re;
 double **ro_, **ru_, **re_;
@@ -101,7 +101,9 @@ int main(int argc, char** argv)
 	MPI_Init(&argc, &argv);
 	init();
 	procExchange();
-
+	
+	saveCSV(0);
+	
 	double t = tau;
 	int step = 1;
 	while (t < TMAX) {
@@ -113,7 +115,7 @@ int main(int argc, char** argv)
 		calcMatrWithTau();		// вычисляем матрицы перед производной по времени
 		calcMatrFlux();			// Вычисляем потоковые величины 
 		calcRHS();				// Вычисляем столбец правых членов
-
+		
 		MPI_Barrier(MPI_COMM_WORLD);
 
 		int maxIter = MAX_ITER;
@@ -152,7 +154,7 @@ int main(int argc, char** argv)
 		//}
 
 		double end_t = MPI_Wtime();   // get time now
-		if (step % PRINT_STEP == 0) printf("%10d | ITER: %4d | time elapsed: %10.6f sec. \n", step, maxIter, end_t - start_t);
+		if (step % PRINT_STEP == 0) log("%10d | ITER: %4d | time elapsed: %10.6f sec. \n", step, maxIter, end_t - start_t);
 		
 		MPI_Barrier(MPI_COMM_WORLD);
 
@@ -182,20 +184,23 @@ void procExchange()
 		// обмен с соседом слева
 		MPI_Recv(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank - 1, 0, MPI_COMM_WORLD, &st);
 		shift = 0;
-		memcpy(&(ro[N]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
-		memcpy(&(ru[N]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
-		memcpy(&(re[N]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT);
+		memcpy(ro[N], &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(ru[N], &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(re[N], &mpi_buf[shift], sizeof(double)*FUNC_COUNT);
 	}
 	else { // ГУ слева
-		
+		shift  = 0;
+		memcpy(ro[N], ro[0], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(ru[N], ru[0], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(re[N], re[0], sizeof(double)*FUNC_COUNT);
 	}
 
 	if (mpi_rank < mpi_size - 1) {
 		// обмен с соседом справа
 		shift = 0;
-		memcpy(&mpi_buf[shift], &(ro[N - 1]), sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
-		memcpy(&mpi_buf[shift], &(ru[N - 1]), sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
-		memcpy(&mpi_buf[shift], &(re[N - 1]), sizeof(double)*FUNC_COUNT);
+		memcpy(&mpi_buf[shift], ro[N - 1], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&mpi_buf[shift], ru[N - 1], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&mpi_buf[shift], re[N - 1], sizeof(double)*FUNC_COUNT);
 		MPI_Send(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank + 1, 0, MPI_COMM_WORLD);
 
 	}
@@ -204,21 +209,25 @@ void procExchange()
 	/* передача влево */
 	if (mpi_rank > 0) {
 		shift = 0;
-		memcpy(&mpi_buf[shift], &(ro[0]), sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
-		memcpy(&mpi_buf[shift], &(ru[0]), sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
-		memcpy(&mpi_buf[shift], &(re[0]), sizeof(double)*FUNC_COUNT);
+		memcpy(&mpi_buf[shift], ro[0], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&mpi_buf[shift], ru[0], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(&mpi_buf[shift], re[0], sizeof(double)*FUNC_COUNT);
 		MPI_Send(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank - 1, 0, MPI_COMM_WORLD);
 	}
 
 	if (mpi_rank < mpi_size - 1) {
 		MPI_Recv(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank + 1, 0, MPI_COMM_WORLD, &st);
 		shift = 0;
-		memcpy(&(ro[N + 1]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
-		memcpy(&(ru[N + 1]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
-		memcpy(&(re[N + 1]), &mpi_buf[shift], sizeof(double)*FUNC_COUNT);
+		memcpy(ro[N + 1], &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(ru[N + 1], &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(re[N + 1], &mpi_buf[shift], sizeof(double)*FUNC_COUNT);
 	}
 	else { // ГУ слева
-		
+		shift = 0;
+		memcpy(ro[N + 1], ro[N - 1], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(ru[N + 1], ru[N - 1], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(re[N + 1], re[N - 1], sizeof(double)*FUNC_COUNT);
+
 	}
 
 
@@ -235,7 +244,7 @@ void saveCSV(int step)
 	}
  	for (int  proc = 0; proc < mpi_size; proc++) {
 		if (mpi_rank == proc) {
-			FILE * fp = fopen(str, "w");
+			FILE * fp = fopen(str, "a");
 			//fprintf(fp, "x,r,p,u\n");
 			for (int i = 0; i < N; i++) {
 				for (int j = 0; j < 2; j++) {
@@ -275,13 +284,13 @@ void memAlloc()
 	ro = new double*[N + 2];
 	ru = new double*[N + 2];
 	re = new double*[N + 2];
-	ro_ = new double*[N + 2];
-	ru_ = new double*[N + 2];
-	re_ = new double*[N + 2];
+	ro_ = new double*[N];
+	ru_ = new double*[N];
+	re_ = new double*[N];
 	matrM = new double**[N];
 	cellGP = new double*[N ];
 	cellGW = new double*[N];
-	cellC = new double[N];
+	cellC = new double[N+2];
 	for (int i = 0; i < N; i++) {
 		ro[i] = new double[FUNC_COUNT];
 		ru[i] = new double[FUNC_COUNT];
@@ -295,6 +304,11 @@ void memAlloc()
 		for (int j = 0; j < FUNC_COUNT; j++) {
 			matrM[i][j] = new double[FUNC_COUNT];
 		}
+	}
+	for (int i = N; i <= N + 1; i++) {
+		ro[i] = new double[FUNC_COUNT];
+		ru[i] = new double[FUNC_COUNT];
+		re[i] = new double[FUNC_COUNT];
 	}
 	r = new double[N + 2];
 	u = new double[N + 2];
@@ -447,8 +461,9 @@ void init() {
 
 	N = G_N / mpi_size;
 	XMIN = G_XMIN + N*h*mpi_rank;
+	if (mpi_rank == mpi_size - 1) N += (G_N % mpi_size);
 	XMAX = XMIN + h*N;
-
+	
 	memAlloc();
 	
 	// узлы квадратур Гаусса и центры ячеек
@@ -463,6 +478,8 @@ void init() {
 		cellGP[i][1] = 0.5*((x1 + x2) + tmp);
 		cellC[i] = 0.50*(x1 + x2);
 	}
+	cellC[N] = (mpi_rank != 0) ? XMIN - 0.5*h : XMIN + 0.5*h;
+	cellC[N + 1] = (mpi_rank != mpi_size-1) ? XMAX + 0.5*h : XMAX - 0.5*h;
 
 	S = MatrixSolver::create(SOLVER_NAME);
 	S->init(G_N, MATR_BLOCK, mpi_rank, mpi_size);
@@ -639,7 +656,6 @@ void calcMatrWithTau() {
 void calcMatrFlux() { 
 	double ri, ei, pi, ui, vi, wi, rb, pb, ub, vb, wb, re, pe, ue, ve, we;
 	vb = 0.0; ve = 0.0; wb = 0.0; we = 0.0;
-
 	for (int iCell = 1; iCell < N - 1; iCell++) {
 
 		{ //!< вычисляем потоки на границе iCell+1/2
@@ -1085,10 +1101,6 @@ void calcMatrFlux() {
 
 
 	} // (iCell = N - 1)
-
-
-
-
 
 }
 
@@ -1953,20 +1965,21 @@ double getDF(int i, int iCell, double x) {
 
 
 double getField(int i, int iCell, double x){
-
+	double result = 0.0;
 	double f1 = getF(1, iCell, x);
 	double f2 = getF(2, iCell, x);
 	switch (i) {
 	case 0:
-		return ro[iCell][0] + ro[iCell][1] * f1 + (FUNC_COUNT < 3 ? 0.0 : ro[iCell][2]) * f2;
+		result = ro[iCell][0] + ro[iCell][1] * f1 + (FUNC_COUNT < 3 ? 0.0 : ro[iCell][2]) * f2;
 		break;
 	case 1:
-		return ru[iCell][0] + ru[iCell][1] * f1 + (FUNC_COUNT < 3 ? 0.0 : ru[iCell][2]) * f2;
+		result = ru[iCell][0] + ru[iCell][1] * f1 + (FUNC_COUNT < 3 ? 0.0 : ru[iCell][2]) * f2;
 		break;
 	case 2:
-		return re[iCell][0] + re[iCell][1] * f1 + (FUNC_COUNT < 3 ? 0.0 : re[iCell][2]) * f2;
+		result = re[iCell][0] + re[iCell][1] * f1 + (FUNC_COUNT < 3 ? 0.0 : re[iCell][2]) * f2;
 		break;
 	}
+	return result;
 }
 
 /**

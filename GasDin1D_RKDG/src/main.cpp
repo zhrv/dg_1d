@@ -7,27 +7,34 @@
 #include <float.h>
 #include "global.h"
 
+//#define BLAST_WAVES
+
 const int		FUNC_COUNT	= 3;
 const int		MATR_BLOCK	= 3 * FUNC_COUNT;
 const char*		SOLVER_NAME = "HYPRE_GMRES"; // ZEIDEL, CUSTOM_HYPRE_SEIDEL, HYPRE_FlexGMRESPrecAMG, HYPRE_BoomerAMG, HYPRE_PCG, HYPRE_FlexGMRES, HYPRE_GMRES
 
-const double	G_XMIN = -1.0;
+#ifdef BLAST_WAVES
+const double	G_XMIN = 0.0;
 const double	G_XMAX = 1.0;
+#else
+const double	G_XMIN = -1.0;
+const double	G_XMAX =  1.0;
+#endif
 
-int		G_N		= 1600;
+int		G_N		= 50;
 double	h		= (G_XMAX - G_XMIN) / G_N;
-double	CFL		= 1.0e-2;
+double	CFL		= 1.0e-1;
 double	tau		= CFL*h; // <= 1.e-5
-double	EPS		= 1.e-3;
+double	EPS		= 1.e-4;
 
 double XMIN, XMAX;
 int N;
 
 const double	LIM_ALPHA	= 2.0;
 
-const double	GAM		= 5.0/3.0;
+const double	GAM		= 1.4;//5.0/3.0;
 const double	AGAM	= GAM-1.0;
-const double	TMAX	= 0.05;
+const double	TMAX	= 0.07;
 
 const int		MAX_ITER	= 5000;
 const int		SAVE_STEP	= 1000;
@@ -174,13 +181,16 @@ int main(int argc, char** argv)
 }
 
 
+#ifdef BLAST_WAVES
+#define _INV_(X) { for (int i = 0; i < FUNC_COUNT; i++) X[i] *= -1.0; } 
+#endif
 void procExchange()
 {
 	int shift;
 	MPI_Status st;
 
 	/* передача вправо */
-	if (mpi_rank > 0) {
+	if (mpi_rank != 0) {
 		// обмен с соседом слева
 		MPI_Recv(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank - 1, 0, MPI_COMM_WORLD, &st);
 		shift = 0;
@@ -191,11 +201,14 @@ void procExchange()
 	else { // ГУ слева
 		shift  = 0;
 		memcpy(ro[N], ro[0], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
-		memcpy(ru[N], ru[0], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		memcpy(ru[N], ru[0], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT; 
+		#ifdef _INV_
+		_INV_(ru[N]);
+		#endif
 		memcpy(re[N], re[0], sizeof(double)*FUNC_COUNT);
 	}
 
-	if (mpi_rank < mpi_size - 1) {
+	if (mpi_rank != mpi_size - 1) {
 		// обмен с соседом справа
 		shift = 0;
 		memcpy(&mpi_buf[shift], ro[N - 1], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
@@ -205,18 +218,19 @@ void procExchange()
 
 	}
 
+	MPI_Barrier(MPI_COMM_WORLD);
 
 	/* передача влево */
-	if (mpi_rank > 0) {
+	if (mpi_rank != 0) {
 		shift = 0;
 		memcpy(&mpi_buf[shift], ro[0], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
 		memcpy(&mpi_buf[shift], ru[0], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
 		memcpy(&mpi_buf[shift], re[0], sizeof(double)*FUNC_COUNT);
-		MPI_Send(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank - 1, 0, MPI_COMM_WORLD);
+		MPI_Send(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank - 1, 1, MPI_COMM_WORLD);
 	}
 
 	if (mpi_rank < mpi_size - 1) {
-		MPI_Recv(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank + 1, 0, MPI_COMM_WORLD, &st);
+		MPI_Recv(mpi_buf, 3 * FUNC_COUNT, MPI_DOUBLE, mpi_rank + 1, 1, MPI_COMM_WORLD, &st);
 		shift = 0;
 		memcpy(ro[N + 1], &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
 		memcpy(ru[N + 1], &mpi_buf[shift], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
@@ -226,6 +240,9 @@ void procExchange()
 		shift = 0;
 		memcpy(ro[N + 1], ro[N - 1], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
 		memcpy(ru[N + 1], ru[N - 1], sizeof(double)*FUNC_COUNT); shift += FUNC_COUNT;
+		#ifdef _INV_
+		_INV_(ru[N + 1]);
+		#endif
 		memcpy(re[N + 1], re[N - 1], sizeof(double)*FUNC_COUNT);
 
 	}
@@ -434,7 +451,7 @@ void calcMassMatr() {
 
 void logStartupInfo()
 {
-	log("N:         %16d\n", N);
+	log("G_N:       %16d\n", G_N);
 	log("CFL:       %16.6E\n", CFL);
 	log("TAU:       %16.6E\n", tau);
 	log("MAX STEP:  %16d\n", (int)(TMAX / tau));
@@ -506,22 +523,24 @@ void init() {
 		//	p[i] = 0.571;
 		//	u[i] = 0.0;
 		//}
+#ifdef BLAST_WAVES
 		// Blast waves !!! XMIN = 0.0; XMAX = 1.0;
-		//if (x <= 0.1) {
-		//	r[i] = 1.0;
-		//	p[i] = 2500.0 * r[i] * AGAM;
-		//	u[i] = 0.0;
-		//}
-		//else if (x >= 0.9) {
-		//	r[i] = 1.0;
-		//	p[i] = 250.0 * r[i] * AGAM;
-		//	u[i] = 0.0;
-		//}
-		//else {
-		//	r[i] = 1.0;
-		//	p[i] = 0.025 * r[i] * AGAM;
-		//	u[i] = 0.0;
-		//}
+		if (x <= 0.1) {
+			r[i] = 1.0;
+			p[i] = 2500.0 * r[i] * AGAM;
+			u[i] = 0.0;
+		}
+		else if (x >= 0.9) {
+			r[i] = 1.0;
+			p[i] = 250.0 * r[i] * AGAM;
+			u[i] = 0.0;
+		}
+		else {
+			r[i] = 1.0;
+			p[i] = 0.025 * r[i] * AGAM;
+			u[i] = 0.0;
+		}
+#else
 		//r[i] = 0.125;
 		//p[i] = 0.1;
 		//u[i] = 1.0;
@@ -537,7 +556,7 @@ void init() {
 		double e = ::pow(r[i], AGAM);
 		u[i] = -2.0*sqrt(e*AGAM*GAM)/AGAM;
 		p[i] = r[i]*e*AGAM;
-
+#endif
 		primToCons(r[i], p[i], u[i], ro[i][0], ru[i][0], re[i][0]);
 		for (int j = 1; j < FUNC_COUNT; j++) {
 			ro[i][j] = 0.0;
@@ -786,7 +805,7 @@ void calcMatrFlux() {
 				for (int jj = 0; jj < 3; jj++){
 					for (int i = 0; i < FUNC_COUNT; i++){
 						for (int j = 0; j < FUNC_COUNT; j++){
-							matr[i][j] = -Ap[ii][jj] * getF(i, iCell, x1)*getF(j, iCell - 1, x1);
+							matr[i][j] = -Ap[ii][jj] * getF(i, iCell, x1)*getF(j, iCell - 1, x1); //!!!!!!!!! Ap
 						}
 					}
 					addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
@@ -896,7 +915,7 @@ void calcMatrFlux() {
 			double REl = getField(2, N, x1);
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
-			rb = re; pb = pe; ub = ue;
+			//rb = re; pb = pe; ub = ue;
 			FLUX(ri, ei, pi, ui, vi, wi,
 				rb, pb, ub, vb, wb,
 				re, pe, ue, ve, we, GAM);
@@ -926,25 +945,25 @@ void calcMatrFlux() {
 			//call Solver_AddMatr9(matr, m9, iCell, iCell)
 			S->addMatrElement(iCell, iCell, matr9);
 
-
-			//for (int i = 0; i < 9; i++) {
-			//	for (int j = 0; j < 9; j++) {
-			//		matr9[i][j] = 0.0;
-			//	}
-			//}
-			//for (int ii = 0; ii < 3; ii++){
-			//	for (int jj = 0; jj < 3; jj++){
-			//		for (int i = 0; i < 3; i++){
-			//			for (int j = 0; j < 3; j++){
-			//				matr[i][j] = -Ap[ii][jj] * getF(i, iCell, x1)*getF(j, iCell - 1, x1);
-			//			}
-			//		}
-			//		addMatr3ToMatr9(matr9, matr, ii, jj);
-			//	}
-			//}
-			//S->addMatrElement(iCell, iCell - 1, matr9);
-			////call Solver_AddMatr9(matr, m9, iCell, iCell + 1)
-
+			if (mpi_rank != 0) {
+				for (int i = 0; i < 9; i++) {
+					for (int j = 0; j < 9; j++) {
+						matr9[i][j] = 0.0;
+					}
+				}
+				for (int ii = 0; ii < 3; ii++){
+					for (int jj = 0; jj < 3; jj++){
+						for (int i = 0; i < FUNC_COUNT; i++){
+							for (int j = 0; j < FUNC_COUNT; j++){
+								matr[i][j] = -Ap[ii][jj] * getF(i, iCell, x1)*getF(j, N/*iCell - 1*/, x1); ///!!!!!!!!!!!!! Ap
+							}
+						}
+						addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
+					}
+				}
+				S->addMatrElement(iCell, iCell - 1, matr9);
+				////call Solver_AddMatr9(matr, m9, iCell, iCell + 1)
+			}
 
 		} // iCell-1/2
 
@@ -974,7 +993,7 @@ void calcMatrFlux() {
 			double REr = getField(2, N + 1, x1);
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
-			re = rb; pe = pb; ue = ub;
+			//re = rb; pe = pb; ue = ub;
 			FLUX(ri, ei, pi, ui, vi, wi,
 				rb, pb, ub, vb, wb,
 				re, pe, ue, ve, we, GAM);
@@ -983,27 +1002,27 @@ void calcMatrFlux() {
 			calcMatrAPM(GAM*pi / ri, ui, GAM, Am, Ap);
 
 
+			if (mpi_rank < mpi_size-1) {
+				for (int i = 0; i < 9; i++) {
+					for (int j = 0; j < 9; j++){
+						matr9[i][j] = 0.0;
+					}
+				}
 
-			//for (int i = 0; i < 9; i++) {
-			//	for (int j = 0; j < 9; j++){
-			//		matr9[i][j] = 0.0;
-			//	}
-			//}
+				for (int ii = 0; ii < 3; ii++){
+					for (int jj = 0; jj < 3; jj++){
+						for (int i = 0; i < FUNC_COUNT; i++){
+							for (int j = 0; j < FUNC_COUNT; j++){
+								matr[i][j] = Am[ii][jj] * getF(i, iCell, x1)*getF(j, N + 1, x1);
+							}
+						}
+						addMatr3ToMatr9(matr9, matr, ii, jj, FUNC_COUNT);
+					}
+				}
 
-			//for (int ii = 1; ii < 3; ii++){
-			//	for (int jj = 1; jj < 3; jj++){
-			//		for (int i = 0; i < 3; i++){
-			//			for (int j = 0; j < 3; j++){
-			//				matr[i][j] = Am[ii][jj] * getF(i, iCell, x1)*getF(j, iCell + 1, x1);
-			//			}
-			//		}
-			//		addMatr3ToMatr9(matr9, matr, ii, jj);
-			//	}
-			//}
-
-			////call Solver_AddMatr9(matr, m9, iCell, iCell)
-			//S->addMatrElement(iCell, iCell + 1, matr9);
-
+				//call Solver_AddMatr9(matr, m9, iCell, iCell)
+				S->addMatrElement(iCell, iCell + 1, matr9);
+			}
 
 			for (int i = 0; i < MATR_BLOCK; i++) {
 				for (int j = 0; j < MATR_BLOCK; j++) {
@@ -1244,7 +1263,7 @@ void calcRHS() {
 			double REr = getField(2, iCell, x);
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
-			rb = re; pb = pe; ub = ue;
+			//rb = re; pb = pe; ub = ue;
 			FLUX_RHS(fRO, fRU, fRE, rb, pb, ub, re, pe, ue, GAM);
 			int shift = 0;
 			for (int j = 0; j < FUNC_COUNT; j++)
@@ -1278,7 +1297,7 @@ void calcRHS() {
 			double REr = getField(2, N+1, x);
 			consToPrim(rb, pb, ub, ROl, RUl, REl);
 			consToPrim(re, pe, ue, ROr, RUr, REr);
-			re = rb; pe = pb; ue = ub;
+			//re = rb; pe = pb; ue = ub;
 			FLUX_RHS(fRO, fRU, fRE, rb, pb, ub, re, pe, ue, GAM);
 			int shift = 0;
 			for (int j = 0; j < FUNC_COUNT; j++)

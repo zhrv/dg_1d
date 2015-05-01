@@ -21,9 +21,9 @@ const double	G_XMIN = -1.0;
 const double	G_XMAX =  1.0;
 #endif
 
-int		G_N		= 50;
+int		G_N		= 400;
 double	h		= (G_XMAX - G_XMIN) / G_N;
-double	CFL		= 1.0e-1;
+double	CFL		= 1.0e-2;
 double	tau		= CFL*h; // <= 1.e-5
 double	EPS		= 1.e-4;
 
@@ -32,13 +32,13 @@ int N;
 
 const double	LIM_ALPHA	= 2.0;
 
-const double	GAM		= 1.4;//5.0/3.0;
+const double	GAM		= 5.0/3.0;
 const double	AGAM	= GAM-1.0;
 const double	TMAX	= 0.07;
 
 const int		MAX_ITER	= 5000;
 const int		SAVE_STEP	= 1000;
-const int		PRINT_STEP	= 100;
+const int		PRINT_STEP	= 1;
 
 double **ro, **ru, **re;
 double **ro_, **ru_, **re_;
